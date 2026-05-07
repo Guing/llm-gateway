@@ -33,6 +33,8 @@ RUN pnpm --filter backend exec prisma generate
 RUN pnpm --filter backend build
 
 # Create a portable production deployment bundle (flat node_modules, prod deps only)
+# Note: We don't use --ignore-scripts here because Prisma needs to run postinstall
+# scripts to build the native binaries required for the database client
 RUN pnpm deploy --legacy --filter backend --prod /deploy/backend
 
 # ── Stage 3: Production image ─────────────────────────────────────────────────
