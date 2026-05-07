@@ -22,7 +22,7 @@ RUN npm install -g pnpm@11
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY packages/backend/package.json ./packages/backend/
 
-RUN pnpm install --frozen-lockfile --filter backend
+RUN pnpm install --frozen-lockfile --filter backend --ignore-scripts
 
 COPY packages/backend ./packages/backend
 
