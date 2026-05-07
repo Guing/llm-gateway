@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build outputs
+dist/
+**/dist/
+packages/frontend/dist/
+
+# Development databases
+*.db
+*.db-journal
+packages/backend/prisma/dev.db
+
+# Environment files (contain secrets)
+.env
+.env.local
+.env.*.local
+
+# Git
+.git/
+.gitignore
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Test files
+**/*.test.ts
+**/*.spec.ts
+coverage/
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# CI
+.github/

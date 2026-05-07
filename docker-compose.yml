@@ -1,0 +1,32 @@
+services:
+  app:
+    build: .
+    image: llm-gateway:local
+    ports:
+      - "3000:3000"
+    volumes:
+      # Persist SQLite database across container restarts
+      - app_data:/data
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: file:/data/prod.db
+      # Override these with strong secrets in production:
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+      # Optional: customize admin credentials on first boot
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@gateway.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      # Optional: restrict CORS origins (comma-separated)
+      # CORS_ORIGIN: https://your-domain.com
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  app_data:
+    driver: local

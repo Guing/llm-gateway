@@ -1,5 +1,6 @@
 import express, { Express } from 'express'
 import cors from 'cors'
+import path from 'path'
 import { config } from './config'
 
 import authRoutes from './routes/auth'
@@ -12,9 +13,9 @@ import gatewayRoutes from './routes/gateway'
 
 const app: Express = express()
 
-// CORS
+// CORS — configurable via CORS_ORIGIN env var
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+  origin: config.corsOrigins,
   credentials: true,
 }))
 
@@ -43,6 +44,19 @@ app.use('/api/logs', logRoutes)
 
 // Gateway — OpenAI + Anthropic compatible
 app.use('/v1', gatewayRoutes)
+
+// Serve built frontend static files in production
+if (config.nodeEnv === 'production') {
+  const frontendDist = path.resolve(__dirname, '..', '..', 'frontend', 'dist')
+  app.use(express.static(frontendDist))
+  // SPA fallback — serve index.html for any non-API route
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/v1') || req.path === '/health') {
+      return next()
+    }
+    res.sendFile(path.join(frontendDist, 'index.html'))
+  })
+}
 
 // 404 fallback
 app.use((_req, res) => {
