@@ -13,7 +13,7 @@
         <el-table-column prop="email" label="邮箱" min-width="200" />
         <el-table-column prop="role" label="角色" width="90">
           <template #default="{ row }">
-            <el-tag :type="row.role === 'admin' ? 'danger' : ''" size="small">{{ row.role }}</el-tag>
+            <el-tag :type="row.role === 'admin' ? 'danger' : 'info'" size="small">{{ row.role }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="API Keys" width="90" align="center">

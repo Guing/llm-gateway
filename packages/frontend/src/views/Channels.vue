@@ -104,7 +104,7 @@ const rules = {
 }
 
 function providerTagType(p: string) {
-  return p === 'openai' ? '' : p === 'anthropic' ? 'warning' : 'info'
+  return p === 'openai' ? 'primary' : p === 'anthropic' ? 'warning' : 'info'
 }
 
 function formatDate(d: string) {

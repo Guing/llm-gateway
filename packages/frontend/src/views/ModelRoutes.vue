@@ -97,7 +97,7 @@ const dialogVisible = ref(false)
 const editingId = ref<number | null>(null)
 const formRef = ref<FormInstance>()
 
-const form = reactive({ virtualModel: '', actualModel: '', channelId: 0, priority: 1, weight: 100 })
+const form = reactive<{ virtualModel: string; actualModel: string; channelId: number | undefined; priority: number; weight: number }>({ virtualModel: '', actualModel: '', channelId: undefined, priority: 1, weight: 100 })
 
 const rules = {
   virtualModel: [{ required: true, message: '必填', trigger: 'blur' }],
@@ -108,12 +108,12 @@ const rules = {
 function priorityTagType(p: number) {
   if (p >= 8) return 'danger'
   if (p >= 4) return 'warning'
-  return ''
+  return 'info'
 }
 
 function openCreate() {
   editingId.value = null
-  Object.assign(form, { virtualModel: '', actualModel: '', channelId: 0, priority: 1, weight: 100 })
+  Object.assign(form, { virtualModel: '', actualModel: '', channelId: undefined, priority: 1, weight: 100 })
   dialogVisible.value = true
 }
 
@@ -136,7 +136,7 @@ async function handleSave() {
       if (editingId.value) {
         await adminStore.updateModelRoute(editingId.value, { ...form })
       } else {
-        await adminStore.createModelRoute({ ...form })
+        await adminStore.createModelRoute({ ...form, channelId: form.channelId! })
       }
       dialogVisible.value = false
       ElMessage.success('保存成功')
