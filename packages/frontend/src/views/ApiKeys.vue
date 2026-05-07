@@ -27,7 +27,7 @@
     </el-alert>
 
     <el-card shadow="never" class="border">
-      <el-table :data="keys" stripe v-loading="loading">
+      <el-table :data="paginatedKeys" stripe v-loading="loading">
         <el-table-column prop="name" label="名称" min-width="160" />
         <el-table-column label="Key (前缀)" min-width="160">
           <template #default="{ row }">
@@ -58,6 +58,17 @@
           </template>
         </el-table-column>
       </el-table>
+      <div class="mt-4 flex justify-end">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="[10, 20, 50, 100]"
+          :total="keys.length"
+          layout="total, sizes, prev, pager, next"
+          background
+          @size-change="currentPage = 1"
+        />
+      </div>
     </el-card>
 
     <!-- Create Dialog -->
@@ -76,7 +87,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import type { FormInstance } from 'element-plus'
 import client from '@/api/client'
@@ -92,6 +103,12 @@ interface ApiKey {
 
 const keys = ref<ApiKey[]>([])
 const loading = ref(false)
+const currentPage = ref(1)
+const pageSize = ref(20)
+const paginatedKeys = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return keys.value.slice(start, start + pageSize.value)
+})
 const saving = ref(false)
 const dialogVisible = ref(false)
 const newKeyPlain = ref('')

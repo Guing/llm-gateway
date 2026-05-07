@@ -8,7 +8,7 @@
     </div>
 
     <el-card shadow="never" class="border">
-      <el-table :data="adminStore.channels" stripe v-loading="loading">
+      <el-table :data="paginatedChannels" stripe v-loading="loading">
         <el-table-column prop="id" label="ID" width="60" />
         <el-table-column prop="name" label="名称" min-width="140" />
         <el-table-column prop="baseUrl" label="Base URL" min-width="200" show-overflow-tooltip />
@@ -30,7 +30,7 @@
         <el-table-column label="创建时间" width="160">
           <template #default="{ row }">{{ formatDate(row.createdAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="160" fixed="right">
+        <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button size="small" @click="openEdit(row)">编辑</el-button>
             <el-button
@@ -42,6 +42,17 @@
           </template>
         </el-table-column>
       </el-table>
+      <div class="mt-4 flex justify-end">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="[10, 20, 50, 100]"
+          :total="adminStore.channels.length"
+          layout="total, sizes, prev, pager, next"
+          background
+          @size-change="currentPage = 1"
+        />
+      </div>
     </el-card>
 
     <!-- Create / Edit Dialog -->
@@ -82,13 +93,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import type { FormInstance } from 'element-plus'
 import { useAdminStore, type Channel } from '@/stores/admin'
 
 const adminStore = useAdminStore()
 const loading = ref(false)
+const currentPage = ref(1)
+const pageSize = ref(20)
+const paginatedChannels = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return adminStore.channels.slice(start, start + pageSize.value)
+})
 const saving = ref(false)
 const dialogVisible = ref(false)
 const editingId = ref<number | null>(null)

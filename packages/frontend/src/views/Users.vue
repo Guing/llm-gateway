@@ -8,7 +8,7 @@
     </div>
 
     <el-card shadow="never" class="border">
-      <el-table :data="adminStore.users" stripe v-loading="loading">
+      <el-table :data="paginatedUsers" stripe v-loading="loading">
         <el-table-column prop="id" label="ID" width="60" />
         <el-table-column prop="email" label="邮箱" min-width="200" />
         <el-table-column prop="role" label="角色" width="90">
@@ -44,6 +44,17 @@
           </template>
         </el-table-column>
       </el-table>
+      <div class="mt-4 flex justify-end">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="[10, 20, 50, 100]"
+          :total="adminStore.users.length"
+          layout="total, sizes, prev, pager, next"
+          background
+          @size-change="currentPage = 1"
+        />
+      </div>
     </el-card>
 
     <!-- Dialog -->
@@ -71,13 +82,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import type { FormInstance } from 'element-plus'
 import { useAdminStore, type AdminUser } from '@/stores/admin'
 
 const adminStore = useAdminStore()
 const loading = ref(false)
+const currentPage = ref(1)
+const pageSize = ref(20)
+const paginatedUsers = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return adminStore.users.slice(start, start + pageSize.value)
+})
 const saving = ref(false)
 const dialogVisible = ref(false)
 const editingId = ref<number | null>(null)

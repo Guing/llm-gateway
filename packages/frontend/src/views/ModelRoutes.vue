@@ -8,7 +8,7 @@
     </div>
 
     <el-card shadow="never" class="border">
-      <el-table :data="adminStore.modelRoutes" stripe v-loading="loading">
+      <el-table :data="paginatedRoutes" stripe v-loading="loading">
         <el-table-column prop="virtualModel" label="虚拟模型名（对外）" min-width="160" />
         <el-table-column label="→" width="40" align="center" />
         <el-table-column prop="actualModel" label="实际模型名" min-width="160" />
@@ -42,6 +42,17 @@
           </template>
         </el-table-column>
       </el-table>
+      <div class="mt-4 flex justify-end">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="[10, 20, 50, 100]"
+          :total="adminStore.modelRoutes.length"
+          layout="total, sizes, prev, pager, next"
+          background
+          @size-change="currentPage = 1"
+        />
+      </div>
     </el-card>
 
     <!-- Dialog -->
@@ -85,13 +96,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import type { FormInstance } from 'element-plus'
 import { useAdminStore, type ModelRoute } from '@/stores/admin'
 
 const adminStore = useAdminStore()
 const loading = ref(false)
+const currentPage = ref(1)
+const pageSize = ref(20)
+const paginatedRoutes = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return adminStore.modelRoutes.slice(start, start + pageSize.value)
+})
 const saving = ref(false)
 const dialogVisible = ref(false)
 const editingId = ref<number | null>(null)

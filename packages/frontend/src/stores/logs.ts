@@ -70,9 +70,15 @@ export const useLogsStore = defineStore('logs', () => {
     virtualModel?: string
     startDate?: string
     endDate?: string
+    append?: boolean
   } = {}) {
-    const res = await client.get(`/logs/conversation/${userId}`, { params })
-    conversation.value = res.data.data
+    const { append, ...queryParams } = params
+    const res = await client.get(`/logs/conversation/${userId}`, { params: queryParams })
+    if (append) {
+      conversation.value = [...res.data.data, ...conversation.value]
+    } else {
+      conversation.value = res.data.data
+    }
     conversationPagination.value = res.data.pagination
   }
 

@@ -106,6 +106,21 @@
               :value="m"
             />
           </el-select>
+          <el-dropdown
+            v-if="logsStore.conversation.length > 0"
+            @command="handleExport"
+          >
+            <el-button size="small">
+              <el-icon class="mr-1"><Download /></el-icon>导出<el-icon class="ml-1 el-icon--right"><ArrowDown /></el-icon>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="csv">导出 CSV</el-dropdown-item>
+                <el-dropdown-item command="txt">导出 TXT</el-dropdown-item>
+                <el-dropdown-item command="md">导出 Markdown</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
       </div>
 
@@ -132,9 +147,13 @@
         </div>
 
         <template v-else>
-          <!-- Load more -->
-          <div v-if="logsStore.conversationPagination.page < logsStore.conversationPagination.totalPages" class="text-center">
-            <el-button size="small" @click="loadMore">加载更多</el-button>
+          <!-- Scroll sentinel: visible when scrolled to top → triggers load older -->
+          <div ref="scrollSentinel" class="h-px"></div>
+
+          <!-- Loading more indicator -->
+          <div v-if="isLoadingMore" class="text-center py-2">
+            <el-icon class="animate-spin"><Loading /></el-icon>
+            <span class="text-xs text-gray-400 ml-1">加载历史消息...</span>
           </div>
 
           <div
@@ -146,7 +165,7 @@
             <div class="flex items-center gap-2 text-xs text-gray-400">
               <span>{{ formatTime(log.requestedAt) }}</span>
               <el-tag size="small" type="info" class="!text-xs">{{ log.virtualModel }}</el-tag>
-              <el-tag v-if="log.actualModel" size="small" type="" class="!text-xs">→ {{ log.actualModel }}</el-tag>
+              <el-tag v-if="log.actualModel" size="small" type="info" class="!text-xs">→ {{ log.actualModel }}</el-tag>
               <el-tag v-if="log.channel?.name" size="small" type="success" class="!text-xs">{{ log.channel.name }}</el-tag>
               <span v-if="log.duration != null" class="text-gray-300">{{ log.duration }}ms</span>
               <el-tag v-if="log.isStreaming" size="small" type="warning" class="!text-xs">SSE</el-tag>
@@ -207,7 +226,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { Download, ArrowDown } from '@element-plus/icons-vue'
 import { useLogsStore } from '@/stores/logs'
 import { useAuthStore } from '@/stores/auth'
 
@@ -217,9 +237,12 @@ const authStore = useAuthStore()
 const isAdmin = computed(() => authStore.isAdmin)
 const selectedUserId = ref<number | null>(null)
 const loadingConversation = ref(false)
+const isLoadingMore = ref(false)
 const filterModel = ref('')
 const dateRange = ref<string[]>([])
 const chatContainer = ref<HTMLElement>()
+const scrollSentinel = ref<HTMLElement | null>(null)
+let scrollObserver: IntersectionObserver | null = null
 
 const selectedUserEmail = computed(() => {
   if (!isAdmin.value) return authStore.user?.email
@@ -287,9 +310,31 @@ async function loadConversation(userId: number, page = 1) {
     if (chatContainer.value && page === 1) {
       chatContainer.value.scrollTop = chatContainer.value.scrollHeight
     }
+    // Setup sentinel observer after initial render
+    await nextTick()
+    setupScrollObserver()
   } finally {
     loadingConversation.value = false
   }
+}
+
+function setupScrollObserver() {
+  scrollObserver?.disconnect()
+  if (!scrollSentinel.value || !chatContainer.value) return
+  scrollObserver = new IntersectionObserver(
+    async (entries) => {
+      if (
+        entries[0].isIntersecting &&
+        !isLoadingMore.value &&
+        !loadingConversation.value &&
+        logsStore.conversationPagination.page < logsStore.conversationPagination.totalPages
+      ) {
+        await loadMore()
+      }
+    },
+    { root: chatContainer.value, threshold: 0 },
+  )
+  scrollObserver.observe(scrollSentinel.value)
 }
 
 async function reloadConversation() {
@@ -302,18 +347,162 @@ async function applyFilter() {
 }
 
 async function loadMore() {
-  if (!selectedUserId.value) return
-  const nextPage = logsStore.conversationPagination.page + 1
-  loadingConversation.value = true
+  if (!selectedUserId.value || isLoadingMore.value) return
+  isLoadingMore.value = true
+  const container = chatContainer.value
+  const prevScrollHeight = container?.scrollHeight ?? 0
   try {
-    const res = await logsStore.fetchConversation(selectedUserId.value, {
-      page: nextPage,
+    await logsStore.fetchConversation(selectedUserId.value, {
+      page: logsStore.conversationPagination.page + 1,
       virtualModel: filterModel.value || undefined,
+      append: true,
     })
-    return res
+    await nextTick()
+    // Maintain scroll position: offset by newly prepended content height
+    if (container) {
+      container.scrollTop = container.scrollHeight - prevScrollHeight
+    }
   } finally {
-    loadingConversation.value = false
+    isLoadingMore.value = false
   }
+}
+
+function downloadBlob(content: string, filename: string, mime: string) {
+  const blob = new Blob([content], { type: mime })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+function baseFilename() {
+  return `logs-${selectedUserEmail.value ?? 'unknown'}-${new Date().toISOString().slice(0, 10)}`
+}
+
+function handleExport(format: string) {
+  if (format === 'csv') exportCSV()
+  else if (format === 'txt') exportTXT()
+  else if (format === 'md') exportMD()
+}
+
+function exportCSV() {
+  const headers = ['时间', '虚拟模型', '实际模型', '渠道', '用户消息', '助手回复', '错误信息', '流式', '输入tokens', '输出tokens', '耗时ms']
+  const rows = logsStore.conversation.map((log) => {
+    const userMsgs = parseMessages(log.requestBody)
+      .filter((m) => m.role === 'user')
+      .map((m) => m.content)
+      .join(' | ')
+    return [
+      formatTime(log.requestedAt),
+      log.virtualModel,
+      log.actualModel ?? '',
+      log.channel?.name ?? '',
+      userMsgs,
+      parseAssistantContent(log.responseBody),
+      log.errorMessage ?? '',
+      log.isStreaming ? '是' : '否',
+      log.promptTokens ?? '',
+      log.completionTokens ?? '',
+      log.duration ?? '',
+    ]
+  })
+  const csv = [headers, ...rows]
+    .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+    .join('\n')
+  downloadBlob('\ufeff' + csv, `${baseFilename()}.csv`, 'text/csv;charset=utf-8')
+}
+
+function exportTXT() {
+  const sep = '─'.repeat(60)
+  const lines: string[] = []
+  lines.push(`请求日志 — ${selectedUserEmail.value}`)
+  lines.push(`导出时间：${new Date().toLocaleString('zh-CN')}`)
+  lines.push(`共 ${logsStore.conversation.length} 条记录`)
+  lines.push('')
+  for (const log of logsStore.conversation) {
+    lines.push(sep)
+    lines.push(`[${formatTime(log.requestedAt)}]  模型: ${log.virtualModel}${log.actualModel ? ' → ' + log.actualModel : ''}${log.channel?.name ? '  渠道: ' + log.channel.name : ''}${log.duration != null ? '  耗时: ' + log.duration + 'ms' : ''}${log.isStreaming ? '  [SSE]' : ''}`)
+    if (log.promptTokens || log.completionTokens) {
+      lines.push(`  Tokens: 输入 ${log.promptTokens ?? 0}  输出 ${log.completionTokens ?? 0}`)
+    }
+    for (const msg of parseMessages(log.requestBody)) {
+      if (msg.role === 'user') {
+        lines.push('')
+        lines.push('  [用户]')
+        lines.push(msg.content.split('\n').map((l) => '    ' + l).join('\n'))
+      } else if (msg.role === 'system') {
+        lines.push('')
+        lines.push('  [System]')
+        lines.push(msg.content.split('\n').map((l) => '    ' + l).join('\n'))
+      }
+    }
+    const assistantContent = parseAssistantContent(log.responseBody)
+    if (assistantContent || log.errorMessage) {
+      lines.push('')
+      lines.push('  [助手]')
+      lines.push((log.errorMessage ? '[错误] ' + log.errorMessage : assistantContent).split('\n').map((l) => '    ' + l).join('\n'))
+    }
+    lines.push('')
+  }
+  downloadBlob(lines.join('\n'), `${baseFilename()}.txt`, 'text/plain;charset=utf-8')
+}
+
+function exportMD() {
+  const lines: string[] = []
+  lines.push(`# 请求日志 — ${selectedUserEmail.value}`)
+  lines.push('')
+  lines.push(`> 导出时间：${new Date().toLocaleString('zh-CN')}  共 ${logsStore.conversation.length} 条记录`)
+  lines.push('')
+  for (const log of logsStore.conversation) {
+    const meta: string[] = [
+      `**${formatTime(log.requestedAt)}**`,
+      `模型: \`${log.virtualModel}\``,
+    ]
+    if (log.actualModel) meta.push(`→ \`${log.actualModel}\``)
+    if (log.channel?.name) meta.push(`渠道: ${log.channel.name}`)
+    if (log.duration != null) meta.push(`${log.duration}ms`)
+    if (log.isStreaming) meta.push('`SSE`')
+    if (log.promptTokens || log.completionTokens) {
+      meta.push(`tokens: ${log.promptTokens ?? 0}↑ ${log.completionTokens ?? 0}↓`)
+    }
+    lines.push('---')
+    lines.push('')
+    lines.push(meta.join(' · '))
+    lines.push('')
+    for (const msg of parseMessages(log.requestBody)) {
+      if (msg.role === 'user') {
+        lines.push('**🧑 用户**')
+        lines.push('')
+        lines.push(msg.content.split('\n').map((l) => '> ' + l).join('\n'))
+        lines.push('')
+      } else if (msg.role === 'system') {
+        lines.push('**⚙️ System**')
+        lines.push('')
+        lines.push('```')
+        lines.push(msg.content)
+        lines.push('```')
+        lines.push('')
+      }
+    }
+    const assistantContent = parseAssistantContent(log.responseBody)
+    if (assistantContent || log.errorMessage) {
+      if (log.errorMessage) {
+        lines.push('**❌ 错误**')
+        lines.push('')
+        lines.push('```')
+        lines.push(log.errorMessage)
+        lines.push('```')
+      } else {
+        lines.push('**🤖 助手**')
+        lines.push('')
+        lines.push(assistantContent)
+      }
+      lines.push('')
+    }
+  }
+  downloadBlob(lines.join('\n'), `${baseFilename()}.md`, 'text/markdown;charset=utf-8')
 }
 
 onMounted(async () => {
@@ -325,5 +514,9 @@ onMounted(async () => {
     selectedUserId.value = selfId
     await loadConversation(selfId)
   }
+})
+
+onBeforeUnmount(() => {
+  scrollObserver?.disconnect()
 })
 </script>
