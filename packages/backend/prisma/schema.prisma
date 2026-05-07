@@ -1,0 +1,90 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int       @id @default(autoincrement())
+  email     String    @unique
+  password  String
+  role      String    @default("user") // "admin" | "user"
+  enabled   Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  apiKeys     ApiKey[]
+  requestLogs RequestLog[]
+}
+
+model ApiKey {
+  id          Int       @id @default(autoincrement())
+  userId      Int
+  name        String
+  keyHash     String    @unique  // SHA-256 hash of the full key
+  keyPrefix   String              // First 8 chars for display, e.g. "sk-gw-ab"
+  enabled     Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  lastUsedAt  DateTime?
+
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  requestLogs RequestLog[]
+}
+
+model Channel {
+  id           Int       @id @default(autoincrement())
+  name         String
+  baseUrl      String
+  encryptedKey String              // AES-256-GCM encrypted upstream API key
+  provider     String    @default("openai") // "openai" | "anthropic" | "custom"
+  enabled      Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  modelRoutes  ModelRoute[]
+  requestLogs  RequestLog[]
+}
+
+model ModelRoute {
+  id           Int       @id @default(autoincrement())
+  virtualModel String              // Exposed model name, e.g. "gpt-4"
+  actualModel  String              // Upstream model name, e.g. "qwen-max"
+  channelId    Int
+  priority     Int       @default(1)  // Higher = tried first
+  weight       Int       @default(100) // 1-100, for weighted random within same priority
+  enabled      Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  channel      Channel    @relation(fields: [channelId], references: [id], onDelete: Cascade)
+}
+
+model RequestLog {
+  id                 Int       @id @default(autoincrement())
+  userId             Int?
+  apiKeyId           Int?
+  channelId          Int?
+  virtualModel       String
+  actualModel        String?
+  requestBody        String              // JSON string of original request
+  responseBody       String?             // JSON string of full response
+  requestedAt        DateTime            // When request started
+  completedAt        DateTime?           // When response finished
+  duration           Int?                // ms, computed from completedAt - requestedAt
+  promptTokens       Int?
+  completionTokens   Int?
+  statusCode         Int?
+  isStreaming        Boolean   @default(false)
+  errorMessage       String?
+  createdAt          DateTime  @default(now())
+
+  user    User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  apiKey  ApiKey?  @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+  channel Channel? @relation(fields: [channelId], references: [id], onDelete: SetNull)
+}

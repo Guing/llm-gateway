@@ -1,0 +1,16 @@
+{
+  "name": "llm-gateway",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev:backend": "cd packages/backend && pnpm dev",
+    "dev:frontend": "cd packages/frontend && pnpm dev",
+    "build": "pnpm --filter backend build && pnpm --filter frontend build",
+    "migrate": "pnpm --filter backend migrate",
+    "seed": "pnpm --filter backend seed",
+    "type-check": "pnpm --filter backend exec tsc --noEmit && pnpm --filter frontend exec vue-tsc --noEmit"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
