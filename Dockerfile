@@ -33,8 +33,7 @@ RUN pnpm --filter backend exec prisma generate
 RUN pnpm --filter backend build
 
 # Create a portable production deployment bundle (flat node_modules, prod deps only)
-RUN pnpm deploy --filter backend --prod /deploy/backend
-
+    RUN pnpm deploy --filter backend --prod --legacy /deploy/backend
 # ── Stage 3: Production image ─────────────────────────────────────────────────
 FROM node:22-alpine
 WORKDIR /app
