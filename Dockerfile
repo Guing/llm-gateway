@@ -2,7 +2,7 @@
 FROM node:22-alpine AS frontend-build
 WORKDIR /app
 
-RUN corepack enable
+RUN npm install -g pnpm@11
 
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY packages/frontend/package.json ./packages/frontend/
@@ -17,7 +17,7 @@ RUN pnpm --filter frontend build
 FROM node:22-alpine AS backend-build
 WORKDIR /app
 
-RUN corepack enable
+RUN npm install -g pnpm@11
 
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY packages/backend/package.json ./packages/backend/
@@ -29,7 +29,7 @@ COPY packages/backend ./packages/backend
 # Generate Prisma client for linux-musl (Alpine)
 RUN pnpm --filter backend exec prisma generate
 
-# Compile TypeScript â†?JavaScript
+# Compile TypeScript ï¿½?JavaScript
 RUN pnpm --filter backend build
 
 # Create a portable production deployment bundle (flat node_modules, prod deps only)
