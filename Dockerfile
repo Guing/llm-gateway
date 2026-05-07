@@ -1,5 +1,5 @@
 # ── Stage 1: Build frontend ──────────────────────────────────────────────────
-FROM node:20-alpine AS frontend-build
+FROM node:22-alpine AS frontend-build
 WORKDIR /app
 
 RUN corepack enable
@@ -14,7 +14,7 @@ COPY packages/frontend ./packages/frontend
 RUN pnpm --filter frontend build
 
 # ── Stage 2: Build backend ────────────────────────────────────────────────────
-FROM node:20-alpine AS backend-build
+FROM node:22-alpine AS backend-build
 WORKDIR /app
 
 RUN corepack enable
@@ -29,14 +29,14 @@ COPY packages/backend ./packages/backend
 # Generate Prisma client for linux-musl (Alpine)
 RUN pnpm --filter backend exec prisma generate
 
-# Compile TypeScript → JavaScript
+# Compile TypeScript �?JavaScript
 RUN pnpm --filter backend build
 
 # Create a portable production deployment bundle (flat node_modules, prod deps only)
 RUN pnpm deploy --filter backend --prod /deploy/backend
 
 # ── Stage 3: Production image ─────────────────────────────────────────────────
-FROM node:20-alpine
+FROM node:22-alpine
 WORKDIR /app
 
 # Copy flat production node_modules from pnpm deploy
