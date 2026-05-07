@@ -7,7 +7,7 @@ RUN npm install -g pnpm@11
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY packages/frontend/package.json ./packages/frontend/
 
-RUN pnpm install --frozen-lockfile --filter frontend
+RUN pnpm install --frozen-lockfile --filter frontend --ignore-scripts
 
 COPY packages/frontend ./packages/frontend
 
