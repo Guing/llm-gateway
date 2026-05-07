@@ -158,4 +158,12 @@ function requireAdminInline(req: AuthRequest, res: Response, next: () => void) {
   next()
 }
 
+// DELETE /api/logs — Clear logs (admin only; ?userId=x clears single user)
+router.delete('/', requireAdminInline, async (req: AuthRequest, res: Response): Promise<void> => {
+  const userId = req.query.userId ? parseInt(req.query.userId as string, 10) : undefined
+  const where = userId ? { userId } : {}
+  const { count } = await prisma.requestLog.deleteMany({ where })
+  res.json({ message: `已删除 ${count} 条日志`, count })
+})
+
 export default router

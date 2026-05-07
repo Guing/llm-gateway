@@ -38,14 +38,16 @@ model ApiKey {
 }
 
 model Channel {
-  id           Int       @id @default(autoincrement())
-  name         String
-  baseUrl      String
-  encryptedKey String              // AES-256-GCM encrypted upstream API key
-  provider     String    @default("openai") // "openai" | "anthropic" | "custom"
-  enabled      Boolean   @default(true)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id             Int       @id @default(autoincrement())
+  name           String
+  baseUrl        String
+  encryptedKey   String              // AES-256-GCM encrypted upstream API key
+  provider       String    @default("openai") // "openai" | "anthropic" | "custom" | "custom-anthropic"
+  enabled        Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  models         String    @default("[]")   // JSON: string[] - upstream model names
+  modelAliases   String    @default("{}")   // JSON: {[upstream: string]: string} - rename map
 
   modelRoutes  ModelRoute[]
   requestLogs  RequestLog[]

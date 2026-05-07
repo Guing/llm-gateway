@@ -2,6 +2,15 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import client from '@/api/client'
 
+export interface ChannelModelRoute {
+  id: number
+  virtualModel: string
+  actualModel: string
+  priority: number
+  weight: number
+  enabled: boolean
+}
+
 export interface Channel {
   id: number
   name: string
@@ -9,7 +18,11 @@ export interface Channel {
   provider: string
   enabled: boolean
   createdAt: string
+  models: string       // JSON string: string[]
+  modelAliases: string // JSON string: {[k:string]:string}
+  apiKey?: string
   _count?: { modelRoutes: number }
+  modelRoutes?: ChannelModelRoute[]
 }
 
 export interface ModelRoute {
@@ -44,12 +57,12 @@ export const useAdminStore = defineStore('admin', () => {
     channels.value = res.data
   }
 
-  async function createChannel(data: { name: string; baseUrl: string; apiKey: string; provider: string }) {
+  async function createChannel(data: { name: string; baseUrl: string; apiKey: string; provider: string; models?: string[]; modelAliases?: Record<string, string> }) {
     await client.post('/admin/channels', data)
     await fetchChannels()
   }
 
-  async function updateChannel(id: number, data: Partial<Channel & { apiKey: string }>) {
+  async function updateChannel(id: number, data: Partial<Channel & { apiKey: string; models: string[]; modelAliases: Record<string, string> }>) {
     await client.put(`/admin/channels/${id}`, data)
     await fetchChannels()
   }

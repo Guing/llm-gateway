@@ -2,9 +2,20 @@
   <div class="flex h-full" style="height: calc(100vh - 0px)">
     <!-- Left sidebar: user list -->
     <div class="w-64 border-r border-gray-200 flex flex-col bg-white">
-      <div class="p-4 border-b border-gray-200">
-        <h3 class="font-semibold text-gray-700">请求日志</h3>
-        <p class="text-xs text-gray-400 mt-0.5">选择用户查看对话</p>
+      <div class="p-4 border-b border-gray-200 flex items-center justify-between">
+        <div>
+          <h3 class="font-semibold text-gray-700">请求日志</h3>
+          <p class="text-xs text-gray-400 mt-0.5">选择用户查看对话</p>
+        </div>
+        <el-tooltip v-if="isAdmin" content="清除全部日志" placement="right">
+          <el-button
+            size="small"
+            type="danger"
+            plain
+            :loading="clearingAll"
+            @click="handleClearAll"
+          ><el-icon><Delete /></el-icon></el-button>
+        </el-tooltip>
       </div>
 
       <!-- Filters (admin only) -->
@@ -44,7 +55,7 @@
           >
             <div class="flex items-center gap-2">
               <div class="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 text-sm font-semibold flex-shrink-0">
-                {{ u.email[0].toUpperCase() }}
+                {{ (u.email?.[0] ?? '?').toUpperCase() }}
               </div>
               <div class="min-w-0">
                 <p class="text-sm font-medium text-gray-800 truncate">{{ u.email }}</p>
@@ -64,14 +75,14 @@
               'px-4 py-3 cursor-pointer hover:bg-gray-50 border-b border-gray-100',
               'bg-blue-50 border-l-2 border-l-blue-500',
             ]"
-            @click="selectUser(authStore.user!.id)"
+            @click="authStore.user && selectUser(authStore.user.id)"
           >
             <div class="flex items-center gap-2">
               <div class="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 text-sm font-semibold flex-shrink-0">
-                {{ authStore.user!.email[0].toUpperCase() }}
+                {{ (authStore.user?.email?.[0] ?? '?').toUpperCase() }}
               </div>
               <div class="min-w-0">
-                <p class="text-sm font-medium text-gray-800 truncate">{{ authStore.user!.email }}</p>
+                <p class="text-sm font-medium text-gray-800 truncate">{{ authStore.user?.email ?? '' }}</p>
                 <p class="text-xs text-gray-400">我的对话记录</p>
               </div>
             </div>
@@ -121,6 +132,14 @@
               </el-dropdown-menu>
             </template>
           </el-dropdown>
+          <el-button
+            v-if="isAdmin && selectedUserId"
+            size="small"
+            type="danger"
+            plain
+            :loading="clearingUser"
+            @click="handleClearUser"
+          ><el-icon class="mr-1"><Delete /></el-icon>清除日志</el-button>
         </div>
       </div>
 
@@ -227,7 +246,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { Download, ArrowDown } from '@element-plus/icons-vue'
+import { Download, ArrowDown, Delete } from '@element-plus/icons-vue'
+import { ElMessageBox, ElMessage } from 'element-plus'
 import { useLogsStore } from '@/stores/logs'
 import { useAuthStore } from '@/stores/auth'
 
@@ -503,6 +523,59 @@ function exportMD() {
     }
   }
   downloadBlob(lines.join('\n'), `${baseFilename()}.md`, 'text/markdown;charset=utf-8')
+}
+
+const clearingAll = ref(false)
+const clearingUser = ref(false)
+
+async function handleClearAll() {
+  try {
+    await ElMessageBox.confirm(
+      '确认要清除全部用户的所有请求日志？此操作不可恢复。',
+      '清除全部日志',
+      { type: 'warning', confirmButtonText: '确认清除', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' }
+    )
+  } catch {
+    return
+  }
+  clearingAll.value = true
+  try {
+    await logsStore.clearLogs()
+    ElMessage.success('已清除全部日志')
+    await logsStore.fetchLogUsers()
+    selectedUserId.value = null
+    logsStore.conversation.splice(0)
+  } catch {
+    ElMessage.error('清除失败')
+  } finally {
+    clearingAll.value = false
+  }
+}
+
+async function handleClearUser() {
+  if (!selectedUserId.value) return
+  const email = selectedUserEmail.value
+  try {
+    await ElMessageBox.confirm(
+      `确认要清除「${email}」的所有日志？此操作不可恢复。`,
+      '清除用户日志',
+      { type: 'warning', confirmButtonText: '确认清除', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' }
+    )
+  } catch {
+    return
+  }
+  clearingUser.value = true
+  try {
+    await logsStore.clearLogs(selectedUserId.value)
+    ElMessage.success(`已清除「${email}」的日志`)
+    await logsStore.fetchLogUsers()
+    selectedUserId.value = null
+    logsStore.conversation.splice(0)
+  } catch {
+    ElMessage.error('清除失败')
+  } finally {
+    clearingUser.value = false
+  }
 }
 
 onMounted(async () => {

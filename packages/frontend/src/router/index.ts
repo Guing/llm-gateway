@@ -36,9 +36,9 @@ const router = createRouter({
           meta: { adminOnly: true },
         },
         {
-          path: 'routes',
-          name: 'ModelRoutes',
-          component: () => import('@/views/ModelRoutes.vue'),
+          path: 'priorities',
+          name: 'Priorities',
+          component: () => import('@/views/Priorities.vue'),
           meta: { adminOnly: true },
         },
         {

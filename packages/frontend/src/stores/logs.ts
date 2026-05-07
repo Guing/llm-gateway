@@ -82,10 +82,14 @@ export const useLogsStore = defineStore('logs', () => {
     conversationPagination.value = res.data.pagination
   }
 
+  async function clearLogs(userId?: number) {
+    await client.delete('/logs', { params: userId ? { userId } : {} })
+  }
+
   return {
     logs, logsPagination,
     conversation, conversationPagination,
     logUsers,
-    fetchLogs, fetchLogUsers, fetchConversation,
+    fetchLogs, fetchLogUsers, fetchConversation, clearLogs,
   }
 })

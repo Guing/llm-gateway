@@ -95,7 +95,7 @@ export async function proxyRequest(
 
   // Determine upstream format
   const upstreamFormat: RequestFormat =
-    provider === 'anthropic' ? 'anthropic' : 'openai'
+    (provider === 'anthropic' || provider === 'custom-anthropic') ? 'anthropic' : 'openai'
 
   // Convert format if needed and substitute actual model name
   let upstreamBody: OpenAIRequest | AnthropicRequest
