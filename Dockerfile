@@ -33,16 +33,17 @@ RUN pnpm --filter backend exec prisma generate
 RUN pnpm --filter backend build
 
 # Create a portable production deployment bundle (flat node_modules, prod deps only)
-    RUN pnpm deploy --filter backend --prod --legacy /deploy/backend
+RUN pnpm deploy --filter backend --prod --legacy /deploy/backend
+
+# Copy Prisma generated binary from pnpm virtual store into deploy dir
+RUN PRISMA_SRC=$(find /app/node_modules/.pnpm -maxdepth 3 -name ".prisma" -type d | head -1) && \
+    cp -r "$PRISMA_SRC" /deploy/backend/node_modules/.prisma
 # ── Stage 3: Production image ─────────────────────────────────────────────────
 FROM node:22-alpine
 WORKDIR /app
 
-# Copy flat production node_modules from pnpm deploy
+# Copy flat production node_modules from pnpm deploy (includes .prisma)
 COPY --from=backend-build /deploy/backend/node_modules ./packages/backend/node_modules
-
-# Restore Prisma native binary (not included by pnpm deploy)
-COPY --from=backend-build /app/packages/backend/node_modules/.prisma ./packages/backend/node_modules/.prisma
 
 # Copy compiled backend JS
 COPY --from=backend-build /app/packages/backend/dist ./packages/backend/dist
