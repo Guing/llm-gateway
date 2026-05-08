@@ -49,14 +49,24 @@ async function handleGatewayRequest(
     return
   }
 
-  logger.info(`[Gateway] ${incomingFormat.toUpperCase()} request`, { model: virtualModel, stream: isStreaming, userId: req.user?.id })
+  // Enrich request entry log
+  const msgCount = Array.isArray(body.messages) ? (body.messages as unknown[]).length : 0
+  const hasTools = !!(body.tools || body.functions)
+  const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
+    || req.socket.remoteAddress
+    || '-'
+  logger.info(
+    `[Gateway] ← ${incomingFormat.toUpperCase()} ${virtualModel}${isStreaming ? ' [stream]' : ''}` +
+    ` | msgs=${msgCount}${hasTools ? ' tools=yes' : ''}` +
+    ` | user=${req.user?.id ?? '-'} key=${req.apiKeyRecord?.id ?? '-'} ip=${clientIp}`
+  )
 
   // Look up routes
   let routes
   try {
     routes = await getRoutesForModel(virtualModel)
   } catch {
-    logger.error(`[Gateway] Route lookup failed for model: ${virtualModel}`)
+    logger.error(`[Gateway] Route lookup failed | model=${virtualModel}`)
     res.status(500).json({ error: 'Route lookup failed' })
     return
   }
@@ -66,6 +76,11 @@ async function handleGatewayRequest(
     res.status(404).json({ error: `No routes configured for model "${virtualModel}"` })
     return
   }
+
+  logger.debug(
+    `[Gateway] Available routes: ` +
+    routes.map((r) => `${r.channelName}/${r.actualModel}(p=${r.priority})`).join(', ')
+  )
 
   // Create initial log record
   const logEntry = await prisma.requestLog.create({
@@ -151,20 +166,24 @@ async function handleNonStreaming(
     })
 
     res.json(responseData)
-    logger.info(`[Gateway] Non-streaming done`, { logId, model: virtualModel, route: route.channelName, duration })
+    logger.info(
+      `[Gateway] ✓ #${logId} ${virtualModel} → ${route.channelName}/${route.actualModel}` +
+      ` | ${duration}ms | in=${promptTokens ?? '?'} out=${completionTokens ?? '?'}`
+    )
   } catch (err) {
     const errorMessage = (err as Error).message
     const completedAt = new Date()
+    const duration = completedAt.getTime() - requestedAt.getTime()
     await prisma.requestLog.update({
       where: { id: logId },
       data: {
         completedAt,
-        duration: completedAt.getTime() - requestedAt.getTime(),
+        duration,
         statusCode: 500,
         errorMessage,
       },
     })
-    logger.error(`[Gateway] Non-streaming error`, { logId, model: virtualModel, error: errorMessage })
+    logger.error(`[Gateway] ✗ #${logId} ${virtualModel} | ${duration}ms | ${errorMessage}`)
     res.status(500).json({ error: errorMessage })
   }
 }
@@ -254,7 +273,11 @@ async function handleStreaming(
           statusCode: 200,
         },
       }).catch(() => {})
-      logger.info(`[Gateway] Streaming done`, { logId, model: virtualModel, route: selectedRoute!.channelName, duration: completedAt.getTime() - requestedAt.getTime() })
+      logger.info(
+        `[Gateway] ✓ #${logId} ${virtualModel} → ${selectedRoute!.channelName}/${selectedRoute!.actualModel}` +
+        ` [stream] | ${completedAt.getTime() - requestedAt.getTime()}ms` +
+        ` | in=${data.promptTokens ?? '?'} out=${data.completionTokens ?? '?'}`
+      )
     })
 
     // Pipe: upstream body → SSE interceptor (passthrough) → client
@@ -266,28 +289,32 @@ async function handleStreaming(
 
     upstreamResponse.body.on('error', async (err: Error) => {
       const completedAt = new Date()
+      const duration = completedAt.getTime() - requestedAt.getTime()
       await prisma.requestLog.update({
         where: { id: logId },
         data: {
           completedAt,
-          duration: completedAt.getTime() - requestedAt.getTime(),
+          duration,
           statusCode: 500,
           errorMessage: err.message,
         },
       }).catch(() => {})
+      logger.error(`[Gateway] ✗ #${logId} ${virtualModel} [stream pipe error] | ${duration}ms | ${err.message}`)
     })
   } catch (err) {
     const errorMessage = (err as Error).message
     const completedAt = new Date()
+    const duration = completedAt.getTime() - requestedAt.getTime()
     await prisma.requestLog.update({
       where: { id: logId },
       data: {
         completedAt,
-        duration: completedAt.getTime() - requestedAt.getTime(),
+        duration,
         statusCode: 500,
         errorMessage,
       },
     }).catch(() => {})
+    logger.error(`[Gateway] ✗ #${logId} ${virtualModel} [stream] | ${duration}ms | ${errorMessage}`)
 
     // SSE error message
     res.write(`data: ${JSON.stringify({ error: errorMessage })}\n\n`)

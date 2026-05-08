@@ -6,8 +6,38 @@ const MAX_DAYS = 30
 
 type LogLevel = 'INFO' | 'WARN' | 'ERROR' | 'DEBUG'
 
+// ANSI color codes for TTY console
+const COLORS: Record<LogLevel, string> = {
+  INFO:  '\x1b[36m',  // cyan
+  WARN:  '\x1b[33m',  // yellow
+  ERROR: '\x1b[31m',  // red
+  DEBUG: '\x1b[90m',  // dark gray
+}
+const RESET = '\x1b[0m'
+const DIM   = '\x1b[2m'
+
+// Padded level labels (all 5 chars)
+const LEVEL_LABEL: Record<LogLevel, string> = {
+  INFO:  'INFO ',
+  WARN:  'WARN ',
+  ERROR: 'ERROR',
+  DEBUG: 'DEBUG',
+}
+
+/** Local time: 2026-05-08 14:30:45.123 */
+function formatTimestamp(): string {
+  const now = new Date()
+  const p = (n: number, d = 2) => String(n).padStart(d, '0')
+  return (
+    `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())} ` +
+    `${p(now.getHours())}:${p(now.getMinutes())}:${p(now.getSeconds())}.${p(now.getMilliseconds(), 3)}`
+  )
+}
+
 function getDateStr(): string {
-  return new Date().toISOString().slice(0, 10) // YYYY-MM-DD
+  const now = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`
 }
 
 function getLogFile(): string {
@@ -35,26 +65,44 @@ function purgeOldLogs() {
   }
 }
 
-function formatMessage(level: LogLevel, message: string, meta?: unknown): string {
-  const ts = new Date().toISOString()
-  const metaStr = meta !== undefined ? ' ' + JSON.stringify(meta) : ''
-  return `[${ts}] [${level}] ${message}${metaStr}\n`
+function formatMeta(meta: unknown): string {
+  if (meta === undefined || meta === null) return ''
+  if (typeof meta === 'string') return ' ' + meta
+  try {
+    return ' ' + JSON.stringify(meta)
+  } catch {
+    return ' [unserializable]'
+  }
+}
+
+/** Plain text line for file storage */
+function formatPlain(level: LogLevel, message: string, meta?: unknown): string {
+  return `${formatTimestamp()} [${LEVEL_LABEL[level]}] ${message}${formatMeta(meta)}\n`
+}
+
+/** Colored line for TTY console */
+function formatColored(level: LogLevel, message: string, meta?: unknown): string {
+  const color = COLORS[level]
+  const metaStr = formatMeta(meta)
+  return `${DIM}${formatTimestamp()}${RESET} ${color}[${LEVEL_LABEL[level]}]${RESET} ${message}${DIM}${metaStr}${RESET}\n`
 }
 
 function write(level: LogLevel, message: string, meta?: unknown) {
-  const line = formatMessage(level, message, meta)
+  const useColor = (level === 'ERROR' ? process.stderr : process.stdout).isTTY
+  const consoleLine = useColor
+    ? formatColored(level, message, meta)
+    : formatPlain(level, message, meta)
 
-  // Always print to console
   if (level === 'ERROR') {
-    process.stderr.write(line)
+    process.stderr.write(consoleLine)
   } else {
-    process.stdout.write(line)
+    process.stdout.write(consoleLine)
   }
 
-  // Write to daily log file
+  // File always plain text
   try {
     ensureLogDir()
-    fs.appendFileSync(getLogFile(), line, 'utf8')
+    fs.appendFileSync(getLogFile(), formatPlain(level, message, meta), 'utf8')
   } catch {
     // ignore file write errors to avoid crashing the app
   }
@@ -65,8 +113,8 @@ ensureLogDir()
 purgeOldLogs()
 
 export const logger = {
-  info: (message: string, meta?: unknown) => write('INFO', message, meta),
-  warn: (message: string, meta?: unknown) => write('WARN', message, meta),
+  info:  (message: string, meta?: unknown) => write('INFO',  message, meta),
+  warn:  (message: string, meta?: unknown) => write('WARN',  message, meta),
   error: (message: string, meta?: unknown) => write('ERROR', message, meta),
   debug: (message: string, meta?: unknown) => {
     if (process.env.NODE_ENV !== 'production') write('DEBUG', message, meta)

@@ -1,5 +1,6 @@
 import fetch, { Response } from 'node-fetch'
 import { RouteCandidate } from './RouterService'
+import { logger } from '../lib/logger'
 
 export interface OpenAIMessage {
   role: 'system' | 'user' | 'assistant'
@@ -126,6 +127,13 @@ export async function proxyRequest(
     endpoint = `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`
   }
 
+  const sentAt = Date.now()
+  logger.debug(
+    `[Proxy] → POST ${endpoint}` +
+    ` | channel=${route.channelName} model=${upstreamBody.model}` +
+    ` | stream=${!!(upstreamBody as Record<string, unknown>).stream}`
+  )
+
   const response = await fetch(endpoint, {
     method: 'POST',
     headers,
@@ -133,13 +141,20 @@ export async function proxyRequest(
     // No timeout here — handled by the caller via Promise.race if needed
   })
 
+  const elapsed = Date.now() - sentAt
+
   if (!response.ok) {
     const errorText = await response.text()
+    logger.warn(
+      `[Proxy] ← ${response.status} ${response.statusText} | channel=${route.channelName} ${elapsed}ms` +
+      ` | ${errorText.slice(0, 300)}`
+    )
     throw new Error(
       `Upstream ${route.channelName} returned ${response.status}: ${errorText}`
     )
   }
 
+  logger.debug(`[Proxy] ← ${response.status} OK | channel=${route.channelName} ${elapsed}ms`)
   return response
 }
 

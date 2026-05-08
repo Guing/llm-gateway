@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma'
 import { decrypt } from '../lib/crypto'
+import { logger } from '../lib/logger'
 
 export interface RouteCandidate {
   routeId: number
@@ -114,15 +115,19 @@ export async function executeWithFallback<T>(
           message.includes('ECONNREFUSED') ||
           message.includes('ECONNRESET') ||
           message.includes('503') ||
-          message.includes('502')
+          message.includes('502') ||
+          // Quota exhausted — try next channel if available
+          message.includes('exceeded your current quota') ||
+          message.includes('quota') ||
+          // Temporary engine unavailability
+          message.includes('engine is not available') ||
+          message.includes('failed_precondition')
 
         if (!isRetriable) {
           throw lastError
         }
 
-        console.warn(
-          `[Router] Channel "${route.channelName}" failed (${message}), trying next...`
-        )
+        logger.warn(`[Router] Channel "${route.channelName}" failed (${message}), trying next...`)
       }
     }
   }
