@@ -42,6 +42,9 @@ RUN PRISMA_SRC=$(find /app/node_modules/.pnpm -maxdepth 3 -name ".prisma" -type 
 FROM node:22-alpine
 WORKDIR /app
 
+# Prisma schema engine requires openssl on Alpine
+RUN apk add --no-cache openssl
+
 # Copy flat production node_modules from pnpm deploy (includes .prisma)
 COPY --from=backend-build /deploy/backend/node_modules ./packages/backend/node_modules
 
@@ -57,10 +60,10 @@ COPY --from=frontend-build /app/packages/frontend/dist ./packages/frontend/dist
 # Persistent SQLite data directory
 RUN mkdir -p /data
 
-EXPOSE 3000
+EXPOSE 7500
 
 ENV NODE_ENV=production \
-    PORT=3000 \
+    PORT=7500 \
     DATABASE_URL=file:/data/prod.db
 
 # Apply DB migrations then start the server

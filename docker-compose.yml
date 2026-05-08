@@ -3,13 +3,13 @@ services:
     build: .
     image: llm-gateway:local
     ports:
-      - "3000:3000"
+      - "7500:7500"
     volumes:
       # Persist SQLite database across container restarts
       - app_data:/data
     environment:
       NODE_ENV: production
-      PORT: 3000
+      PORT: 7500
       DATABASE_URL: file:/data/prod.db
       # Override these with strong secrets in production:
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
@@ -21,7 +21,7 @@ services:
       # CORS_ORIGIN: https://your-domain.com
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:7500/health"]
       interval: 30s
       timeout: 5s
       retries: 3

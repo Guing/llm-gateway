@@ -201,10 +201,10 @@ const authStore = useAuthStore()
 const loading = ref(false)
 const isAdmin = computed(() => authStore.isAdmin)
 
-// Detect current API base URL (same host, port 3000 in dev)
+// Detect current API base URL (same host, port 7500 in dev)
 const apiBase = computed(() => {
   const url = new URL(window.location.href)
-  return `${url.protocol}//${url.hostname}:3000`
+  return `${url.protocol}//${url.hostname}:7500`
 })
 
 const codeTab = ref('python')
