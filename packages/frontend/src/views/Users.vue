@@ -59,7 +59,7 @@
 
     <!-- Dialog -->
     <el-dialog v-model="dialogVisible" :title="editingId ? '编辑用户' : '添加用户'" width="420px">
-      <el-form ref="formRef" :model="form" :rules="formRules" label-width="80px">
+      <el-form ref="formRef" :model="form" :rules="formRules" label-width="80px" @submit.prevent>
         <el-form-item label="邮箱" prop="email">
           <el-input v-model="form.email" :disabled="!!editingId" />
         </el-form-item>

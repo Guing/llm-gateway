@@ -61,7 +61,7 @@
       :title="editingId ? '编辑路由' : '添加路由'"
       width="480px"
     >
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="100px">
+      <el-form ref="formRef" :model="form" :rules="rules" label-width="100px" @submit.prevent>
         <el-form-item label="虚拟模型名" prop="virtualModel">
           <el-input v-model="form.virtualModel" placeholder="对外暴露的模型名, 如 gpt-4" />
         </el-form-item>

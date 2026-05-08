@@ -83,7 +83,7 @@
       width="640px"
       :close-on-click-modal="false"
     >
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="100px">
+      <el-form ref="formRef" :model="form" :rules="rules" label-width="100px" @submit.prevent>
         <el-form-item label="渠道名称" prop="name">
           <el-input v-model="form.name" placeholder="渠道名称，如 OpenAI官方" />
         </el-form-item>
@@ -96,7 +96,8 @@
           </el-select>
         </el-form-item>
         <el-form-item label="Base URL" prop="baseUrl">
-          <el-input v-model="form.baseUrl" placeholder="https://api.openai.com" />
+          <el-input v-model="form.baseUrl" :placeholder="baseUrlPlaceholder" />
+          <div class="text-xs text-gray-400 mt-1">{{ baseUrlHint }}</div>
         </el-form-item>
         <el-form-item label="API Key" :prop="editingId ? '' : 'apiKey'">
           <el-input
@@ -212,6 +213,28 @@ const PROVIDERS: Record<string, { label: string; tag: 'primary' | 'warning' | 'i
   custom: { label: '自定义(OAI)', tag: 'info' },
   'custom-anthropic': { label: '自定义(Claude)', tag: 'success' },
 }
+
+const BASE_URL_CONFIG: Record<string, { placeholder: string; hint: string }> = {
+  openai: {
+    placeholder: 'https://api.openai.com',
+    hint: 'OpenAI 官方接口，填写根地址即可，无需加 /v1',
+  },
+  anthropic: {
+    placeholder: 'https://api.anthropic.com',
+    hint: 'Anthropic 官方接口，填写根地址即可，无需加 /v1',
+  },
+  custom: {
+    placeholder: 'https://your-openai-compatible-api.com',
+    hint: '兼容 OpenAI 格式的自定义接口，填写根地址（不含 /v1/chat/completions），如 https://api.example.com',
+  },
+  'custom-anthropic': {
+    placeholder: 'https://your-anthropic-compatible-api.com',
+    hint: '兼容 Anthropic 格式的自定义接口，填写根地址（不含 /v1/messages），如 https://api.example.com',
+  },
+}
+
+const baseUrlPlaceholder = computed(() => BASE_URL_CONFIG[form.provider]?.placeholder ?? 'https://...')
+const baseUrlHint = computed(() => BASE_URL_CONFIG[form.provider]?.hint ?? '')
 
 function providerLabel(p: string) { return PROVIDERS[p]?.label ?? p }
 function providerTagType(p: string) { return PROVIDERS[p]?.tag ?? 'info' }

@@ -1,5 +1,6 @@
 import { Router, Response, IRouter } from 'express'
 import { prisma } from '../lib/prisma'
+import { logger } from '../lib/logger'
 import { AuthRequest, apiKeyAuth } from '../middleware/authMiddleware'
 import {
   getRoutesForModel,
@@ -48,16 +49,20 @@ async function handleGatewayRequest(
     return
   }
 
+  logger.info(`[Gateway] ${incomingFormat.toUpperCase()} request`, { model: virtualModel, stream: isStreaming, userId: req.user?.id })
+
   // Look up routes
   let routes
   try {
     routes = await getRoutesForModel(virtualModel)
   } catch {
+    logger.error(`[Gateway] Route lookup failed for model: ${virtualModel}`)
     res.status(500).json({ error: 'Route lookup failed' })
     return
   }
 
   if (routes.length === 0) {
+    logger.warn(`[Gateway] No routes for model: ${virtualModel}`)
     res.status(404).json({ error: `No routes configured for model "${virtualModel}"` })
     return
   }
@@ -146,6 +151,7 @@ async function handleNonStreaming(
     })
 
     res.json(responseData)
+    logger.info(`[Gateway] Non-streaming done`, { logId, model: virtualModel, route: route.channelName, duration })
   } catch (err) {
     const errorMessage = (err as Error).message
     const completedAt = new Date()
@@ -158,6 +164,7 @@ async function handleNonStreaming(
         errorMessage,
       },
     })
+    logger.error(`[Gateway] Non-streaming error`, { logId, model: virtualModel, error: errorMessage })
     res.status(500).json({ error: errorMessage })
   }
 }
@@ -247,6 +254,7 @@ async function handleStreaming(
           statusCode: 200,
         },
       }).catch(() => {})
+      logger.info(`[Gateway] Streaming done`, { logId, model: virtualModel, route: selectedRoute!.channelName, duration: completedAt.getTime() - requestedAt.getTime() })
     })
 
     // Pipe: upstream body → SSE interceptor (passthrough) → client

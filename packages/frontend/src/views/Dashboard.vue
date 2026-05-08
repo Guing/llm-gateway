@@ -204,7 +204,12 @@ const isAdmin = computed(() => authStore.isAdmin)
 // Detect current API base URL (same host, port 7500 in dev)
 const apiBase = computed(() => {
   const url = new URL(window.location.href)
-  return `${url.protocol}//${url.hostname}:7500`
+  if (import.meta.env.DEV) {
+    return `${url.protocol}//${url.hostname}:7500`
+  }
+  // Production: use current site URL + port (no port means standard 80/443)
+  const port = url.port ? `:${url.port}` : ''
+  return `${url.protocol}//${url.hostname}${port}`
 })
 
 const codeTab = ref('python')

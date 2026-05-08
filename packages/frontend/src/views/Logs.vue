@@ -202,10 +202,15 @@
                 </div>
               </div>
 
-              <!-- System message: centered -->
+              <!-- System message: centered, collapsed by default -->
               <div v-else-if="msg.role === 'system'" class="flex justify-center">
-                <div class="max-w-[80%] bg-yellow-50 border border-yellow-200 text-yellow-800 rounded-lg px-3 py-1.5 text-xs">
-                  <span class="font-semibold mr-1">[System]</span>{{ msg.content }}
+                <div
+                  class="max-w-[80%] bg-yellow-50 border border-yellow-200 text-yellow-800 rounded-lg px-3 py-1.5 text-xs cursor-pointer select-none"
+                  @click="toggleSystem(log.id, idx)"
+                >
+                  <span class="font-semibold mr-1">[System]</span>
+                  <span v-if="isSystemExpanded(log.id, idx)" class="whitespace-pre-wrap break-words">{{ msg.content }}</span>
+                  <span v-else class="text-yellow-500 italic">{{ msg.content.slice(0, 40) }}{{ msg.content.length > 40 ? '…' : '' }} <span class="underline">点击展开</span></span>
                 </div>
               </div>
             </template>
@@ -263,6 +268,16 @@ const dateRange = ref<string[]>([])
 const chatContainer = ref<HTMLElement>()
 const scrollSentinel = ref<HTMLElement | null>(null)
 let scrollObserver: IntersectionObserver | null = null
+
+// System message expand/collapse state, key = `${logId}-${msgIdx}`
+const expandedSystems = ref<Set<string>>(new Set())
+function systemKey(logId: number, idx: number) { return `${logId}-${idx}` }
+function isSystemExpanded(logId: number, idx: number) { return expandedSystems.value.has(systemKey(logId, idx)) }
+function toggleSystem(logId: number, idx: number) {
+  const key = systemKey(logId, idx)
+  if (expandedSystems.value.has(key)) expandedSystems.value.delete(key)
+  else expandedSystems.value.add(key)
+}
 
 const selectedUserEmail = computed(() => {
   if (!isAdmin.value) return authStore.user?.email
