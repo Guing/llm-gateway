@@ -462,12 +462,12 @@ async function loadConversation(userId: number, page = 1) {
       startDate: dateRange.value?.[0] || undefined,
       endDate: dateRange.value?.[1] || undefined,
     })
+    // Must set false BEFORE nextTick so chat bubbles render before we measure scrollHeight
+    loadingConversation.value = false
     await nextTick()
     if (chatContainer.value && page === 1) {
       chatContainer.value.scrollTop = chatContainer.value.scrollHeight
     }
-    // Setup sentinel observer after initial render
-    await nextTick()
     setupScrollObserver()
   } finally {
     loadingConversation.value = false
