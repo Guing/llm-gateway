@@ -101,20 +101,56 @@
     <!-- Right: conversation view -->
     <div class="flex-1 flex flex-col bg-gray-50">
       <!-- Header -->
-      <div v-if="selectedUserId" class="px-6 py-3 bg-white border-b border-gray-200 flex items-center justify-between">
-        <div>
-          <h4 class="font-semibold text-gray-700">{{ selectedUserEmail }}</h4>
-          <p class="text-xs text-gray-400">
-            共 {{ logsStore.conversationPagination.total }} 条对话记录
-          </p>
+      <div v-if="selectedUserId" class="px-6 pt-3 pb-2 bg-white border-b border-gray-200">
+        <!-- Row 1: user info + action buttons -->
+        <div class="flex items-center justify-between mb-2">
+          <div>
+            <h4 class="font-semibold text-gray-700">{{ selectedUserEmail }}</h4>
+            <p class="text-xs text-gray-400">
+              共 {{ logsStore.conversationPagination.total }} 条对话记录
+            </p>
+          </div>
+          <div class="flex items-center gap-2">
+            <el-dropdown
+              v-if="logsStore.conversation.length > 0"
+              @command="handleExport"
+            >
+              <el-button size="small">
+                <el-icon class="mr-1"><Download /></el-icon>导出<el-icon class="ml-1 el-icon--right"><ArrowDown /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="csv">导出 CSV</el-dropdown-item>
+                  <el-dropdown-item command="txt">导出 TXT</el-dropdown-item>
+                  <el-dropdown-item command="md">导出 Markdown</el-dropdown-item>
+                  <el-dropdown-item divided command="toggle-system-filter">
+                    <span class="flex items-center gap-1">
+                      <el-icon v-if="exportFilterSystem" class="text-blue-500"><Check /></el-icon>
+                      <span v-else class="inline-block w-4"></span>
+                      过滤系统提示词
+                    </span>
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+            <el-button
+              v-if="isAdmin && selectedUserId"
+              size="small"
+              type="danger"
+              plain
+              :loading="clearingUser"
+              @click="handleClearUser"
+            ><el-icon class="mr-1"><Delete /></el-icon>清除日志</el-button>
+          </div>
         </div>
-        <div class="flex items-center gap-2 flex-wrap justify-end">
+        <!-- Row 2: filters -->
+        <div class="flex items-center gap-2 flex-wrap">
           <el-select
             v-model="filterModel"
             placeholder="筛选模型"
             size="small"
             clearable
-            style="width: 140px"
+            style="width: 150px"
             @change="reloadConversation"
           >
             <el-option
@@ -129,7 +165,7 @@
             placeholder="筛选渠道"
             size="small"
             clearable
-            style="width: 130px"
+            style="width: 140px"
             @change="reloadConversation"
           >
             <el-option
@@ -144,7 +180,7 @@
             placeholder="筛选原模型"
             size="small"
             clearable
-            style="width: 140px"
+            style="width: 150px"
             @change="reloadConversation"
           >
             <el-option
@@ -154,45 +190,6 @@
               :value="m"
             />
           </el-select>
-          <el-tooltip :content="sortOrder === 'desc' ? '当前：最新优先，点击切换' : '当前：最早优先，点击切换'" placement="top">
-            <el-button size="small" @click="toggleSort">
-              <el-icon class="mr-1">
-                <SortDown v-if="sortOrder === 'desc'" />
-                <SortUp v-else />
-              </el-icon>
-              {{ sortOrder === 'desc' ? '最新' : '最早' }}优先
-            </el-button>
-          </el-tooltip>
-          <el-dropdown
-            v-if="logsStore.conversation.length > 0"
-            @command="handleExport"
-          >
-            <el-button size="small">
-              <el-icon class="mr-1"><Download /></el-icon>导出<el-icon class="ml-1 el-icon--right"><ArrowDown /></el-icon>
-            </el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="csv">导出 CSV</el-dropdown-item>
-                <el-dropdown-item command="txt">导出 TXT</el-dropdown-item>
-                <el-dropdown-item command="md">导出 Markdown</el-dropdown-item>
-                <el-dropdown-item divided command="toggle-system-filter">
-                  <span class="flex items-center gap-1">
-                    <el-icon v-if="exportFilterSystem" class="text-blue-500"><Check /></el-icon>
-                    <span v-else class="inline-block w-4"></span>
-                    过滤系统提示词
-                  </span>
-                </el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-          <el-button
-            v-if="isAdmin && selectedUserId"
-            size="small"
-            type="danger"
-            plain
-            :loading="clearingUser"
-            @click="handleClearUser"
-          ><el-icon class="mr-1"><Delete /></el-icon>清除日志</el-button>
         </div>
       </div>
 
@@ -246,17 +243,28 @@
 
             <!-- User messages (from requestBody) -->
             <template v-for="(msg, idx) in parseMessages(log.requestBody)" :key="idx">
-              <!-- User message: right aligned -->
-              <div v-if="msg.role === 'user'" class="flex justify-end">
+              <!-- User message: right aligned, shows text + images -->
+              <div v-if="msg.role === 'user' && (msg.content || msg.images.length)" class="flex justify-end">
                 <div class="max-w-[70%]">
                   <div class="bg-blue-500 text-white rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm shadow-sm">
-                    <p class="whitespace-pre-wrap break-words">{{ msg.content }}</p>
+                    <div v-if="msg.images.length" class="flex flex-wrap gap-1 mb-1.5">
+                      <el-image
+                        v-for="(imgUrl, iIdx) in msg.images"
+                        :key="iIdx"
+                        :src="imgUrl"
+                        :preview-src-list="msg.images"
+                        :initial-index="iIdx"
+                        fit="contain"
+                        class="max-w-[180px] max-h-[180px] rounded overflow-hidden bg-white/10"
+                      />
+                    </div>
+                    <p v-if="msg.content" class="whitespace-pre-wrap break-words">{{ msg.content }}</p>
                   </div>
                 </div>
               </div>
 
               <!-- System message: centered, collapsed by default -->
-              <div v-else-if="msg.role === 'system'" class="flex justify-center">
+              <div v-else-if="msg.role === 'system' && msg.content" class="flex justify-center">
                 <div
                   class="max-w-[80%] bg-yellow-50 border border-yellow-200 text-yellow-800 rounded-lg px-3 py-1.5 text-xs cursor-pointer select-none"
                   @click="toggleSystem(log.id, idx)"
@@ -320,7 +328,6 @@ const refreshing = ref(false)
 const filterModel = ref('')
 const filterChannel = ref('')
 const filterActualModel = ref('')
-const sortOrder = ref<'asc' | 'desc'>('desc')
 const exportFilterSystem = ref(false)
 const dateRange = ref<string[]>([])
 const chatContainer = ref<HTMLElement>()
@@ -357,9 +364,7 @@ const availableActualModels = computed(() => {
   return [...set]
 })
 
-const displayedConversation = computed(() =>
-  sortOrder.value === 'desc' ? [...logsStore.conversation].reverse() : logsStore.conversation
-)
+const displayedConversation = computed(() => [...logsStore.conversation].reverse())
 
 function formatTime(t: string) {
   return new Date(t).toLocaleString('zh-CN', {
@@ -370,19 +375,61 @@ function formatTime(t: string) {
   })
 }
 
-function parseMessages(requestBody: string): Array<{ role: string; content: string }> {
+interface ParsedMessage {
+  role: string
+  content: string
+  images: string[]
+}
+
+function parseMessages(requestBody: string): ParsedMessage[] {
   try {
     const body = JSON.parse(requestBody)
     // OpenAI format
-    if (body.messages) return body.messages
-    // Anthropic format
-    const msgs: Array<{ role: string; content: string }> = []
-    if (body.system) msgs.push({ role: 'system', content: body.system })
-    if (body.messages) msgs.push(...body.messages)
-    return msgs
+    const rawMsgs: Array<{ role: string; content: unknown }> = body.messages ?? []
+    // Prepend system from Anthropic-style top-level system field
+    if (body.system && !rawMsgs.find((m) => m.role === 'system')) {
+      rawMsgs.unshift({ role: 'system', content: body.system })
+    }
+    return rawMsgs.map((m) => ({
+      role: m.role,
+      content: extractTextContent(m.content),
+      images: extractImages(m.content),
+    }))
   } catch {
     return []
   }
+}
+
+/** Handles content as string, null, or OpenAI content-block array */
+function extractTextContent(content: unknown): string {
+  if (!content) return ''
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    return (content as Array<{ type?: string; text?: string }>)
+      .filter((c) => c.type === 'text' && c.text)
+      .map((c) => c.text!)
+      .join('\n')
+  }
+  return String(content)
+}
+
+/** Extract image URLs from content blocks (OpenAI image_url / Anthropic image source) */
+function extractImages(content: unknown): string[] {
+  if (!Array.isArray(content)) return []
+  const urls: string[] = []
+  for (const c of content as Array<{
+    type?: string
+    image_url?: { url?: string }
+    source?: { type?: string; media_type?: string; data?: string }
+  }>) {
+    if (c.type === 'image_url' && c.image_url?.url) {
+      urls.push(c.image_url.url)
+    } else if (c.type === 'image' && c.source?.data) {
+      // Anthropic base64 format
+      urls.push(`data:${c.source.media_type ?? 'image/jpeg'};base64,${c.source.data}`)
+    }
+  }
+  return urls
 }
 
 function parseAssistantContent(responseBody: string | null): string {
@@ -417,11 +464,7 @@ async function loadConversation(userId: number, page = 1) {
     })
     await nextTick()
     if (chatContainer.value && page === 1) {
-      if (sortOrder.value === 'asc') {
-        chatContainer.value.scrollTop = chatContainer.value.scrollHeight
-      } else {
-        chatContainer.value.scrollTop = 0
-      }
+      chatContainer.value.scrollTop = chatContainer.value.scrollHeight
     }
     // Setup sentinel observer after initial render
     await nextTick()
@@ -467,14 +510,6 @@ async function handleRefresh() {
   } finally {
     refreshing.value = false
   }
-}
-
-function toggleSort() {
-  sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc'
-  nextTick(() => {
-    if (!chatContainer.value) return
-    chatContainer.value.scrollTop = sortOrder.value === 'desc' ? 0 : chatContainer.value.scrollHeight
-  })
 }
 
 async function loadMore() {
@@ -525,10 +560,11 @@ function handleExport(format: string) {
 }
 
 function exportCSV() {
+  const data = displayedConversation.value
   const headers = exportFilterSystem.value
     ? ['时间', '虚拟模型', '实际模型', '渠道', '用户消息', '助手回复', '错误信息', '流式', '输入tokens', '输出tokens', '耗时ms']
     : ['时间', '虚拟模型', '实际模型', '渠道', '用户消息', '系统提示词', '助手回复', '错误信息', '流式', '输入tokens', '输出tokens', '耗时ms']
-  const rows = logsStore.conversation.map((log) => {
+  const rows = data.map((log) => {
     const msgs = parseMessages(log.requestBody)
     const userMsgs = msgs.filter((m) => m.role === 'user').map((m) => m.content).join(' | ')
     const systemMsgs = msgs.filter((m) => m.role === 'system').map((m) => m.content).join(' | ')
@@ -557,13 +593,14 @@ function exportCSV() {
 }
 
 function exportTXT() {
+  const data = displayedConversation.value
   const sep = '─'.repeat(60)
   const lines: string[] = []
   lines.push(`请求日志 — ${selectedUserEmail.value}`)
   lines.push(`导出时间：${new Date().toLocaleString('zh-CN')}`)
-  lines.push(`共 ${logsStore.conversation.length} 条记录`)
+  lines.push(`共 ${data.length} 条记录`)
   lines.push('')
-  for (const log of logsStore.conversation) {
+  for (const log of data) {
     lines.push(sep)
     lines.push(`[${formatTime(log.requestedAt)}]  模型: ${log.virtualModel}${log.actualModel ? ' → ' + log.actualModel : ''}${log.channel?.name ? '  渠道: ' + log.channel.name : ''}${log.duration != null ? '  耗时: ' + log.duration + 'ms' : ''}${log.isStreaming ? '  [SSE]' : ''}`)
     if (log.promptTokens || log.completionTokens) {
@@ -592,12 +629,13 @@ function exportTXT() {
 }
 
 function exportMD() {
+  const data = displayedConversation.value
   const lines: string[] = []
   lines.push(`# 请求日志 — ${selectedUserEmail.value}`)
   lines.push('')
-  lines.push(`> 导出时间：${new Date().toLocaleString('zh-CN')}  共 ${logsStore.conversation.length} 条记录`)
+  lines.push(`> 导出时间：${new Date().toLocaleString('zh-CN')}  共 ${data.length} 条记录`)
   lines.push('')
-  for (const log of logsStore.conversation) {
+  for (const log of data) {
     const meta: string[] = [
       `**${formatTime(log.requestedAt)}**`,
       `模型: \`${log.virtualModel}\``,

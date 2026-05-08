@@ -124,7 +124,7 @@ router.get('/conversation/:userId', async (req: AuthRequest, res: Response): Pro
     prisma.requestLog.count({ where }),
     prisma.requestLog.findMany({
       where,
-      orderBy: { requestedAt: 'asc' },
+      orderBy: { requestedAt: 'desc' },
       skip,
       take: limit,
       select: {

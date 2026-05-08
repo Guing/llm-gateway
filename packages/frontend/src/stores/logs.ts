@@ -77,7 +77,7 @@ export const useLogsStore = defineStore('logs', () => {
     const { append, ...queryParams } = params
     const res = await client.get(`/logs/conversation/${userId}`, { params: queryParams })
     if (append) {
-      conversation.value = [...res.data.data, ...conversation.value]
+      conversation.value = [...conversation.value, ...res.data.data]
     } else {
       conversation.value = res.data.data
     }
