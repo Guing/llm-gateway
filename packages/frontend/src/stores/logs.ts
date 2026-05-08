@@ -68,6 +68,8 @@ export const useLogsStore = defineStore('logs', () => {
   async function fetchConversation(userId: number, params: {
     page?: number
     virtualModel?: string
+    channelName?: string
+    actualModel?: string
     startDate?: string
     endDate?: string
     append?: boolean

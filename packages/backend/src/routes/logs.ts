@@ -107,10 +107,12 @@ router.get('/conversation/:userId', async (req: AuthRequest, res: Response): Pro
   const limit = Math.min(parseInt(req.query.limit as string || '30', 10), 100)
   const skip = (page - 1) * limit
 
-  const { virtualModel, startDate, endDate } = req.query
+  const { virtualModel, startDate, endDate, channelName, actualModel } = req.query
 
   const where: Record<string, unknown> = { userId: targetUserId }
   if (virtualModel) where.virtualModel = virtualModel
+  if (actualModel) where.actualModel = actualModel
+  if (channelName) where.channel = { name: channelName as string }
   if (startDate || endDate) {
     where.requestedAt = {
       ...(startDate ? { gte: new Date(startDate as string) } : {}),

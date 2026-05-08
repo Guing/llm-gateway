@@ -7,15 +7,22 @@
           <h3 class="font-semibold text-gray-700">请求日志</h3>
           <p class="text-xs text-gray-400 mt-0.5">选择用户查看对话</p>
         </div>
-        <el-tooltip v-if="isAdmin" content="清除全部日志" placement="right">
-          <el-button
-            size="small"
-            type="danger"
-            plain
-            :loading="clearingAll"
-            @click="handleClearAll"
-          ><el-icon><Delete /></el-icon></el-button>
-        </el-tooltip>
+        <div class="flex items-center gap-1">
+          <el-tooltip content="刷新" placement="right">
+            <el-button size="small" :loading="refreshing" @click="handleRefresh">
+              <el-icon><RefreshRight /></el-icon>
+            </el-button>
+          </el-tooltip>
+          <el-tooltip v-if="isAdmin" content="清除全部日志" placement="right">
+            <el-button
+              size="small"
+              type="danger"
+              plain
+              :loading="clearingAll"
+              @click="handleClearAll"
+            ><el-icon><Delete /></el-icon></el-button>
+          </el-tooltip>
+        </div>
       </div>
 
       <!-- Filters (admin only) -->
@@ -101,13 +108,13 @@
             共 {{ logsStore.conversationPagination.total }} 条对话记录
           </p>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-2 flex-wrap justify-end">
           <el-select
             v-model="filterModel"
             placeholder="筛选模型"
             size="small"
             clearable
-            style="width: 160px"
+            style="width: 140px"
             @change="reloadConversation"
           >
             <el-option
@@ -117,6 +124,45 @@
               :value="m"
             />
           </el-select>
+          <el-select
+            v-model="filterChannel"
+            placeholder="筛选渠道"
+            size="small"
+            clearable
+            style="width: 130px"
+            @change="reloadConversation"
+          >
+            <el-option
+              v-for="c in availableChannels"
+              :key="c"
+              :label="c"
+              :value="c"
+            />
+          </el-select>
+          <el-select
+            v-model="filterActualModel"
+            placeholder="筛选原模型"
+            size="small"
+            clearable
+            style="width: 140px"
+            @change="reloadConversation"
+          >
+            <el-option
+              v-for="m in availableActualModels"
+              :key="m"
+              :label="m"
+              :value="m"
+            />
+          </el-select>
+          <el-tooltip :content="sortOrder === 'desc' ? '当前：最新优先，点击切换' : '当前：最早优先，点击切换'" placement="top">
+            <el-button size="small" @click="toggleSort">
+              <el-icon class="mr-1">
+                <SortDown v-if="sortOrder === 'desc'" />
+                <SortUp v-else />
+              </el-icon>
+              {{ sortOrder === 'desc' ? '最新' : '最早' }}优先
+            </el-button>
+          </el-tooltip>
           <el-dropdown
             v-if="logsStore.conversation.length > 0"
             @command="handleExport"
@@ -129,6 +175,13 @@
                 <el-dropdown-item command="csv">导出 CSV</el-dropdown-item>
                 <el-dropdown-item command="txt">导出 TXT</el-dropdown-item>
                 <el-dropdown-item command="md">导出 Markdown</el-dropdown-item>
+                <el-dropdown-item divided command="toggle-system-filter">
+                  <span class="flex items-center gap-1">
+                    <el-icon v-if="exportFilterSystem" class="text-blue-500"><Check /></el-icon>
+                    <span v-else class="inline-block w-4"></span>
+                    过滤系统提示词
+                  </span>
+                </el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -176,7 +229,7 @@
           </div>
 
           <div
-            v-for="log in logsStore.conversation"
+            v-for="log in displayedConversation"
             :key="log.id"
             class="space-y-2"
           >
@@ -263,7 +316,12 @@ const isAdmin = computed(() => authStore.isAdmin)
 const selectedUserId = ref<number | null>(null)
 const loadingConversation = ref(false)
 const isLoadingMore = ref(false)
+const refreshing = ref(false)
 const filterModel = ref('')
+const filterChannel = ref('')
+const filterActualModel = ref('')
+const sortOrder = ref<'asc' | 'desc'>('desc')
+const exportFilterSystem = ref(false)
 const dateRange = ref<string[]>([])
 const chatContainer = ref<HTMLElement>()
 const scrollSentinel = ref<HTMLElement | null>(null)
@@ -288,6 +346,20 @@ const availableModels = computed(() => {
   const models = new Set(logsStore.conversation.map((l) => l.virtualModel))
   return [...models]
 })
+
+const availableChannels = computed(() => {
+  const set = new Set(logsStore.conversation.map((l) => l.channel?.name).filter(Boolean) as string[])
+  return [...set]
+})
+
+const availableActualModels = computed(() => {
+  const set = new Set(logsStore.conversation.map((l) => l.actualModel).filter(Boolean) as string[])
+  return [...set]
+})
+
+const displayedConversation = computed(() =>
+  sortOrder.value === 'desc' ? [...logsStore.conversation].reverse() : logsStore.conversation
+)
 
 function formatTime(t: string) {
   return new Date(t).toLocaleString('zh-CN', {
@@ -338,12 +410,18 @@ async function loadConversation(userId: number, page = 1) {
     await logsStore.fetchConversation(userId, {
       page,
       virtualModel: filterModel.value || undefined,
+      channelName: filterChannel.value || undefined,
+      actualModel: filterActualModel.value || undefined,
       startDate: dateRange.value?.[0] || undefined,
       endDate: dateRange.value?.[1] || undefined,
     })
     await nextTick()
     if (chatContainer.value && page === 1) {
-      chatContainer.value.scrollTop = chatContainer.value.scrollHeight
+      if (sortOrder.value === 'asc') {
+        chatContainer.value.scrollTop = chatContainer.value.scrollHeight
+      } else {
+        chatContainer.value.scrollTop = 0
+      }
     }
     // Setup sentinel observer after initial render
     await nextTick()
@@ -381,6 +459,24 @@ async function applyFilter() {
   if (selectedUserId.value) await reloadConversation()
 }
 
+async function handleRefresh() {
+  refreshing.value = true
+  try {
+    if (isAdmin.value) await logsStore.fetchLogUsers()
+    if (selectedUserId.value) await reloadConversation()
+  } finally {
+    refreshing.value = false
+  }
+}
+
+function toggleSort() {
+  sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc'
+  nextTick(() => {
+    if (!chatContainer.value) return
+    chatContainer.value.scrollTop = sortOrder.value === 'desc' ? 0 : chatContainer.value.scrollHeight
+  })
+}
+
 async function loadMore() {
   if (!selectedUserId.value || isLoadingMore.value) return
   isLoadingMore.value = true
@@ -390,6 +486,8 @@ async function loadMore() {
     await logsStore.fetchConversation(selectedUserId.value, {
       page: logsStore.conversationPagination.page + 1,
       virtualModel: filterModel.value || undefined,
+      channelName: filterChannel.value || undefined,
+      actualModel: filterActualModel.value || undefined,
       append: true,
     })
     await nextTick()
@@ -417,31 +515,40 @@ function baseFilename() {
 }
 
 function handleExport(format: string) {
+  if (format === 'toggle-system-filter') {
+    exportFilterSystem.value = !exportFilterSystem.value
+    return
+  }
   if (format === 'csv') exportCSV()
   else if (format === 'txt') exportTXT()
   else if (format === 'md') exportMD()
 }
 
 function exportCSV() {
-  const headers = ['时间', '虚拟模型', '实际模型', '渠道', '用户消息', '助手回复', '错误信息', '流式', '输入tokens', '输出tokens', '耗时ms']
+  const headers = exportFilterSystem.value
+    ? ['时间', '虚拟模型', '实际模型', '渠道', '用户消息', '助手回复', '错误信息', '流式', '输入tokens', '输出tokens', '耗时ms']
+    : ['时间', '虚拟模型', '实际模型', '渠道', '用户消息', '系统提示词', '助手回复', '错误信息', '流式', '输入tokens', '输出tokens', '耗时ms']
   const rows = logsStore.conversation.map((log) => {
-    const userMsgs = parseMessages(log.requestBody)
-      .filter((m) => m.role === 'user')
-      .map((m) => m.content)
-      .join(' | ')
-    return [
+    const msgs = parseMessages(log.requestBody)
+    const userMsgs = msgs.filter((m) => m.role === 'user').map((m) => m.content).join(' | ')
+    const systemMsgs = msgs.filter((m) => m.role === 'system').map((m) => m.content).join(' | ')
+    const row = [
       formatTime(log.requestedAt),
       log.virtualModel,
       log.actualModel ?? '',
       log.channel?.name ?? '',
       userMsgs,
+    ]
+    if (!exportFilterSystem.value) row.push(systemMsgs)
+    row.push(
       parseAssistantContent(log.responseBody),
       log.errorMessage ?? '',
       log.isStreaming ? '是' : '否',
-      log.promptTokens ?? '',
-      log.completionTokens ?? '',
-      log.duration ?? '',
-    ]
+      String(log.promptTokens ?? ''),
+      String(log.completionTokens ?? ''),
+      String(log.duration ?? ''),
+    )
+    return row
   })
   const csv = [headers, ...rows]
     .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
@@ -467,7 +574,7 @@ function exportTXT() {
         lines.push('')
         lines.push('  [用户]')
         lines.push(msg.content.split('\n').map((l) => '    ' + l).join('\n'))
-      } else if (msg.role === 'system') {
+      } else if (msg.role === 'system' && !exportFilterSystem.value) {
         lines.push('')
         lines.push('  [System]')
         lines.push(msg.content.split('\n').map((l) => '    ' + l).join('\n'))
@@ -512,7 +619,7 @@ function exportMD() {
         lines.push('')
         lines.push(msg.content.split('\n').map((l) => '> ' + l).join('\n'))
         lines.push('')
-      } else if (msg.role === 'system') {
+      } else if (msg.role === 'system' && !exportFilterSystem.value) {
         lines.push('**⚙️ System**')
         lines.push('')
         lines.push('```')
