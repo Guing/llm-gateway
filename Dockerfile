@@ -57,8 +57,8 @@ COPY --from=backend-build /app/packages/backend/prisma ./packages/backend/prisma
 # Copy built frontend static files
 COPY --from=frontend-build /app/packages/frontend/dist ./packages/frontend/dist
 
-# Persistent SQLite data directory
-RUN mkdir -p /data
+# Persistent data/log directories
+RUN mkdir -p /data /logs
 
 EXPOSE 7500
 

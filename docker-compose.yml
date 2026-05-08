@@ -7,10 +7,13 @@ services:
     volumes:
       # Persist SQLite database across container restarts
       - app_data:/data
+      # Persist backend log files
+      - app_logs:/logs
     environment:
       NODE_ENV: production
       PORT: 7500
       DATABASE_URL: file:/data/prod.db
+      LOG_DIR: /logs
       # Override these with strong secrets in production:
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
@@ -29,4 +32,6 @@ services:
 
 volumes:
   app_data:
+    driver: local
+  app_logs:
     driver: local
