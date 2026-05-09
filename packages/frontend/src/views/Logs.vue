@@ -4,7 +4,7 @@
     <div class="w-64 border-r border-gray-200 flex flex-col bg-white">
       <div class="p-4 border-b border-gray-200 flex items-center justify-between">
         <div>
-          <h3 class="font-semibold text-gray-700">请求日志</h3>
+          <h3 class="font-semibold text-gray-700">聊天记录</h3>
           <p class="text-xs text-gray-400 mt-0.5">选择用户查看对话</p>
         </div>
         <div class="flex items-center gap-1">
@@ -596,7 +596,7 @@ function exportTXT() {
   const data = displayedConversation.value
   const sep = '─'.repeat(60)
   const lines: string[] = []
-  lines.push(`请求日志 — ${selectedUserEmail.value}`)
+  lines.push(`聊天记录 — ${selectedUserEmail.value}`)
   lines.push(`导出时间：${new Date().toLocaleString('zh-CN')}`)
   lines.push(`共 ${data.length} 条记录`)
   lines.push('')
@@ -631,7 +631,7 @@ function exportTXT() {
 function exportMD() {
   const data = displayedConversation.value
   const lines: string[] = []
-  lines.push(`# 请求日志 — ${selectedUserEmail.value}`)
+  lines.push(`# 聊天记录 — ${selectedUserEmail.value}`)
   lines.push('')
   lines.push(`> 导出时间：${new Date().toLocaleString('zh-CN')}  共 ${data.length} 条记录`)
   lines.push('')
@@ -691,7 +691,7 @@ const clearingUser = ref(false)
 async function handleClearAll() {
   try {
     await ElMessageBox.confirm(
-      '确认要清除全部用户的所有请求日志？此操作不可恢复。',
+      '确认要清除全部用户的所有聊天记录？此操作不可恢复。',
       '清除全部日志',
       { type: 'warning', confirmButtonText: '确认清除', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' }
     )

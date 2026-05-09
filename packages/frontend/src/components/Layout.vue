@@ -50,7 +50,7 @@ const allNavItems = [
   { path: '/priorities', label: '模型优先级', icon: 'Sort', adminOnly: true },
   { path: '/users', label: '用户管理', icon: 'User', adminOnly: true },
   { path: '/api-keys', label: 'API Keys', icon: 'Key', adminOnly: false },
-  { path: '/logs', label: '请求日志', icon: 'Document', adminOnly: false },
+  { path: '/logs', label: '聊天记录', icon: 'Document', adminOnly: false },
 ]
 
 const navItems = computed(() =>
