@@ -175,7 +175,7 @@ const groups = computed<RouteGroup[]>(() => {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([virtualModel, routes]) => ({
       virtualModel,
-      routes: routes.slice().sort((a, b) => b._priority - a._priority),
+      routes: routes.slice().sort((a, b) => b.priority - a.priority),
     }))
 })
 
