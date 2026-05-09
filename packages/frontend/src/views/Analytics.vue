@@ -123,13 +123,13 @@
           <el-table-column prop="channelName" label="渠道" min-width="120" />
           <el-table-column prop="actualModel" label="实际模型" min-width="160" />
           <el-table-column prop="requests" label="请求数" width="90" align="right" sortable />
-          <el-table-column label="输入 Tokens" width="120" align="right" sortable :sort-method="(a, b) => a.promptTokens - b.promptTokens">
+          <el-table-column label="输入 Tokens" width="120" align="right" sortable :sort-method="(a: any, b: any) => a.promptTokens - b.promptTokens">
             <template #default="{ row }">{{ fmtNum(row.promptTokens) }}</template>
           </el-table-column>
-          <el-table-column label="输出 Tokens" width="120" align="right" sortable :sort-method="(a, b) => a.completionTokens - b.completionTokens">
+          <el-table-column label="输出 Tokens" width="120" align="right" sortable :sort-method="(a: any, b: any) => a.completionTokens - b.completionTokens">
             <template #default="{ row }">{{ fmtNum(row.completionTokens) }}</template>
           </el-table-column>
-          <el-table-column label="总 Tokens" width="110" align="right" sortable :sort-method="(a, b) => a.totalTokens - b.totalTokens">
+          <el-table-column label="总 Tokens" width="110" align="right" sortable :sort-method="(a: any, b: any) => a.totalTokens - b.totalTokens">
             <template #default="{ row }">
               <span class="font-semibold text-blue-600">{{ fmtNum(row.totalTokens) }}</span>
             </template>
