@@ -63,6 +63,12 @@ const router = createRouter({
           component: () => import('@/views/SystemLogs.vue'),
           meta: { adminOnly: true },
         },
+        {
+          path: 'analytics',
+          name: 'Analytics',
+          component: () => import('@/views/Analytics.vue'),
+          meta: { adminOnly: true },
+        },
       ],
     },
   ],

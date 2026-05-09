@@ -12,6 +12,7 @@ import logRoutes from './routes/logs'
 import systemLogRoutes from './routes/systemLogs'
 import settingsRoutes from './routes/settings'
 import gatewayRoutes from './routes/gateway'
+import analyticsRoutes from './routes/analytics'
 
 const app: Express = express()
 
@@ -45,6 +46,7 @@ app.use('/api/admin/routes', modelRouteRoutes)
 app.use('/api/logs', logRoutes)
 app.use('/api/admin/system-logs', systemLogRoutes)
 app.use('/api/admin/settings', settingsRoutes)
+app.use('/api/admin/analytics', analyticsRoutes)
 
 // Gateway — OpenAI + Anthropic compatible
 app.use('/v1', gatewayRoutes)

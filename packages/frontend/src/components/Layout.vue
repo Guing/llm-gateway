@@ -46,6 +46,7 @@ const user = computed(() => auth.user)
 
 const allNavItems = [
   { path: '/dashboard', label: '仪表盘', icon: 'Odometer', adminOnly: false },
+  { path: '/analytics', label: '数据分析', icon: 'TrendCharts', adminOnly: true },
   { path: '/channels', label: '上游渠道', icon: 'Connection', adminOnly: true },
   { path: '/priorities', label: '模型优先级', icon: 'Sort', adminOnly: true },
   { path: '/users', label: '用户管理', icon: 'User', adminOnly: true },

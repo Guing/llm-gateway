@@ -108,7 +108,7 @@
                 />
               </template>
             </el-table-column>
-            <el-table-column label="状态" width="100">
+            <el-table-column label="状态" width="130">
               <template #default="{ row }">
                 <el-switch
                   v-model="row._enabled"
