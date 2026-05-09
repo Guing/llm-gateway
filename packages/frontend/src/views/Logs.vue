@@ -235,6 +235,12 @@
               <span>{{ formatTime(log.requestedAt) }}</span>
               <el-tag size="small" type="info" class="!text-xs">{{ log.virtualModel }}</el-tag>
               <el-tag v-if="log.actualModel" size="small" type="info" class="!text-xs">→ {{ log.actualModel }}</el-tag>
+              <el-tag
+                v-for="t in parseModelTypes(log.modelTypes)"
+                :key="t"
+                size="small"
+                class="!text-xs"
+              >{{ MODEL_TYPE_LABELS[t] ?? t }}</el-tag>
               <el-tag v-if="log.channel?.name" size="small" type="success" class="!text-xs">{{ log.channel.name }}</el-tag>
               <span v-if="log.duration != null" class="text-gray-300">{{ log.duration }}ms</span>
               <el-tag v-if="log.isStreaming" size="small" type="warning" class="!text-xs">SSE</el-tag>
@@ -319,6 +325,23 @@ import { useAuthStore } from '@/stores/auth'
 
 const logsStore = useLogsStore()
 const authStore = useAuthStore()
+
+// Model type labels for display
+const MODEL_TYPE_LABELS: Record<string, string> = {
+  'chat': '文本',
+  'vision': '视觉',
+  'function-calling': '工具',
+  'reasoning': '推理',
+  'embedding': '嵌入',
+  'image-generation': '图像',
+  'audio': '语音',
+  'video-generation': '视频',
+}
+
+function parseModelTypes(raw: string | undefined | null): string[] {
+  if (!raw) return []
+  try { return JSON.parse(raw) as string[] } catch { return [] }
+}
 
 const isAdmin = computed(() => authStore.isAdmin)
 const selectedUserId = ref<number | null>(null)

@@ -23,6 +23,17 @@
           </template>
         </el-table-column>
         <el-table-column prop="weight" label="权重" width="70" align="center" />
+        <el-table-column label="类型" min-width="160">
+          <template #default="{ row }">
+            <span v-if="parseModelRouteTypes(row.types).length === 0" class="text-xs text-gray-300">未设置</span>
+            <el-tag
+              v-for="t in parseModelRouteTypes(row.types)"
+              :key="t"
+              size="small"
+              class="mr-0.5 !text-xs"
+            >{{ MODEL_TYPE_LABELS[t] ?? t }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="80">
           <template #default="{ row }">
             <el-tag :type="row.enabled ? 'success' : 'danger'" size="small">
@@ -105,6 +116,23 @@ const adminStore = useAdminStore()
 const loading = ref(false)
 const currentPage = ref(1)
 const pageSize = ref(20)
+
+const MODEL_TYPE_LABELS: Record<string, string> = {
+  'chat': '文本',
+  'vision': '视觉',
+  'function-calling': '工具调用',
+  'reasoning': '推理',
+  'embedding': '嵌入',
+  'image-generation': '图像生成',
+  'audio': '语音',
+  'video-generation': '视频生成',
+}
+
+function parseModelRouteTypes(raw: string | string[] | undefined | null): string[] {
+  if (!raw) return []
+  if (Array.isArray(raw)) return raw
+  try { return JSON.parse(raw) as string[] } catch { return [] }
+}
 const paginatedRoutes = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
   return adminStore.modelRoutes.slice(start, start + pageSize.value)

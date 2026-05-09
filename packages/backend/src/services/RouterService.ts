@@ -13,6 +13,7 @@ export interface RouteCandidate {
   actualModel: string
   priority: number
   weight: number
+  types: string[]
 }
 
 /**
@@ -37,6 +38,7 @@ export async function getRoutesForModel(
     actualModel: r.actualModel,
     priority: r.priority,
     weight: r.weight,
+    types: (() => { try { return JSON.parse(r.types || '[]') as string[] } catch { return [] } })(),
   }))
 }
 

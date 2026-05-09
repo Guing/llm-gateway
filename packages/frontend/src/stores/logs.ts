@@ -16,6 +16,7 @@ export interface RequestLog {
   statusCode: number | null
   isStreaming: boolean
   errorMessage: string | null
+  modelTypes: string   // JSON string: string[]
   user?: { email: string }
   channel?: { name: string }
 }

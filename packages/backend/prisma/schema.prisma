@@ -50,6 +50,7 @@ model Channel {
   updatedAt      DateTime  @updatedAt
   models         String    @default("[]")   // JSON: string[] - upstream model names
   modelAliases   String    @default("{}")   // JSON: {[upstream: string]: string} - rename map
+  modelTypes     String    @default("{}")   // JSON: {[upstream: string]: string[]} - model capability types
 
   modelRoutes  ModelRoute[]
   requestLogs  RequestLog[]
@@ -63,6 +64,7 @@ model ModelRoute {
   priority     Int       @default(1)  // Higher = tried first
   weight       Int       @default(100) // 1-100, for weighted random within same priority
   enabled      Boolean   @default(true)
+  types        String    @default("[]")   // JSON: string[] - model capability types
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
@@ -86,6 +88,7 @@ model RequestLog {
   statusCode         Int?
   isStreaming        Boolean   @default(false)
   errorMessage       String?
+  modelTypes         String    @default("[]")   // JSON: string[] - snapshot of model capability types at request time
   createdAt          DateTime  @default(now())
 
   user    User?    @relation(fields: [userId], references: [id], onDelete: SetNull)

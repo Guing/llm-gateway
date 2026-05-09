@@ -9,6 +9,7 @@ export interface ChannelModelRoute {
   priority: number
   weight: number
   enabled: boolean
+  types?: string[]
 }
 
 export interface Channel {
@@ -20,6 +21,7 @@ export interface Channel {
   createdAt: string
   models: string       // JSON string: string[]
   modelAliases: string // JSON string: {[k:string]:string}
+  modelTypes?: string  // JSON string: {[k:string]:string[]}
   apiKey?: string
   _count?: { modelRoutes: number }
   modelRoutes?: ChannelModelRoute[]
@@ -57,12 +59,12 @@ export const useAdminStore = defineStore('admin', () => {
     channels.value = res.data
   }
 
-  async function createChannel(data: { name: string; baseUrl: string; apiKey: string; provider: string; models?: string[]; modelAliases?: Record<string, string> }) {
+  async function createChannel(data: { name: string; baseUrl: string; apiKey: string; provider: string; models?: string[]; modelAliases?: Record<string, string>; modelTypes?: Record<string, string[]> }) {
     await client.post('/admin/channels', data)
     await fetchChannels()
   }
 
-  async function updateChannel(id: number, data: Partial<Channel & { apiKey: string; models: string[]; modelAliases: Record<string, string> }>) {
+  async function updateChannel(id: number, data: Partial<Channel & { apiKey: string; models: string[]; modelAliases: Record<string, string>; modelTypes: Record<string, string[]> }>) {
     await client.put(`/admin/channels/${id}`, data)
     await fetchChannels()
   }

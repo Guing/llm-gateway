@@ -166,6 +166,7 @@ async function handleNonStreaming(
             promptTokens,
             completionTokens,
             statusCode: 200,
+            modelTypes: JSON.stringify(route.types ?? []),
           },
         }).then(() =>
           logger.info(
@@ -292,6 +293,7 @@ async function handleStreaming(
           promptTokens: data.promptTokens ?? null,
           completionTokens: data.completionTokens ?? null,
           statusCode: 200,
+          modelTypes: JSON.stringify(selectedRoute!.types ?? []),
         },
       }).catch(() => {})
       logger.info(

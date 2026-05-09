@@ -24,6 +24,14 @@
                   <span v-if="m.virtualModel !== m.actualModel" class="text-gray-400">→</span>
                   <span v-if="m.virtualModel !== m.actualModel" class="font-mono text-blue-600">{{ m.virtualModel }}</span>
                   <el-tag size="small" :type="m.enabled ? 'success' : 'danger'" class="ml-1">P{{ m.priority }}</el-tag>
+                  <el-tag
+                    v-for="t in parseRouteTypes(m.types)"
+                    :key="t"
+                    size="small"
+                    :color="MODEL_TYPE_MAP[t]?.color"
+                    class="ml-0.5 !border-0"
+                    style="color: #fff;"
+                  >{{ MODEL_TYPE_MAP[t]?.label ?? t }}</el-tag>
                 </div>
               </div>
             </div>
@@ -111,49 +119,63 @@
         <el-divider content-position="left"><span class="text-xs text-gray-500">模型配置</span></el-divider>
 
         <el-form-item label="模型列表">
-          <div class="w-full space-y-2">
+          <div class="w-full space-y-3">
             <div
               v-for="(model, idx) in form.models"
               :key="idx"
-              class="flex items-center gap-2"
+              class="border rounded p-2 bg-gray-50 space-y-2"
             >
-              <el-input
-                v-model="form.models[idx]"
-                placeholder="上游模型名，如 gpt-4"
-                class="flex-1"
-                @blur="cleanModel(idx)"
-              />
-              <el-icon class="text-gray-300 flex-shrink-0"><ArrowRight /></el-icon>
-              <el-input
-                v-model="form.aliases[model]"
-                placeholder="重命名（可选）"
-                class="flex-1"
-              />
-              <el-tooltip
-                :content="testStates[idx]?.message"
-                :disabled="!testStates[idx] || testStates[idx].status === 'idle'"
-                placement="top"
-              >
+              <div class="flex items-center gap-2">
+                <el-input
+                  v-model="form.models[idx]"
+                  placeholder="上游模型名，如 gpt-4"
+                  class="flex-1"
+                  @blur="cleanModel(idx)"
+                />
+                <el-icon class="text-gray-300 flex-shrink-0"><ArrowRight /></el-icon>
+                <el-input
+                  v-model="form.aliases[model]"
+                  placeholder="重命名（可选）"
+                  class="flex-1"
+                />
+                <el-tooltip
+                  :content="testStates[idx]?.message"
+                  :disabled="!testStates[idx] || testStates[idx].status === 'idle'"
+                  placement="top"
+                >
+                  <el-button
+                    size="small"
+                    :type="testBtnType(idx)"
+                    plain
+                    :loading="testStates[idx]?.loading"
+                    :disabled="!form.models[idx]?.trim()"
+                    @click="testModel(idx)"
+                  >测试</el-button>
+                </el-tooltip>
                 <el-button
                   size="small"
-                  :type="testBtnType(idx)"
+                  type="danger"
                   plain
-                  :loading="testStates[idx]?.loading"
-                  :disabled="!form.models[idx]?.trim()"
-                  @click="testModel(idx)"
-                >测试</el-button>
-              </el-tooltip>
-              <el-button
-                size="small"
-                type="danger"
-                plain
-                @click="removeModel(idx)"
-              >删除</el-button>
+                  @click="removeModel(idx)"
+                >删除</el-button>
+              </div>
+              <!-- Model type checkboxes -->
+              <div class="flex flex-wrap gap-1 pl-1">
+                <span class="text-xs text-gray-400 mr-1 self-center">类型：</span>
+                <el-checkbox-group v-model="form.modelTypes[model]" size="small">
+                  <el-checkbox-button
+                    v-for="mt in MODEL_TYPES"
+                    :key="mt.value"
+                    :value="mt.value"
+                    class="!text-xs"
+                  >{{ mt.label }}</el-checkbox-button>
+                </el-checkbox-group>
+              </div>
             </div>
             <el-button size="small" plain @click="addModel">
               <el-icon class="mr-1"><Plus /></el-icon>添加模型
             </el-button>
-            <p class="text-xs text-gray-400">左侧填上游模型名，右侧可选填对外暴露的别名</p>
+            <p class="text-xs text-gray-400">左侧填上游模型名，右侧可选填对外暴露的别名；勾选模型功能类型</p>
           </div>
         </el-form-item>
       </el-form>
@@ -181,6 +203,39 @@ const formRef = ref<FormInstance>()
 const currentPage = ref(1)
 const pageSize = ref(20)
 
+// Model capability types
+const MODEL_TYPES = [
+  { value: 'chat', label: '文本' },
+  { value: 'vision', label: '视觉' },
+  { value: 'function-calling', label: '工具调用' },
+  { value: 'reasoning', label: '推理' },
+  { value: 'embedding', label: '嵌入' },
+  { value: 'image-generation', label: '图像生成' },
+  { value: 'audio', label: '语音' },
+  { value: 'video-generation', label: '视频生成' },
+]
+
+const MODEL_TYPE_COLORS: Record<string, string> = {
+  'chat': '#409eff',
+  'vision': '#67c23a',
+  'function-calling': '#e6a23c',
+  'reasoning': '#9b59b6',
+  'embedding': '#1abc9c',
+  'image-generation': '#e91e63',
+  'audio': '#ff5722',
+  'video-generation': '#795548',
+}
+
+const MODEL_TYPE_MAP: Record<string, { label: string; color: string }> = Object.fromEntries(
+  MODEL_TYPES.map((t) => [t.value, { label: t.label, color: MODEL_TYPE_COLORS[t.value] ?? '#909399' }])
+)
+
+function parseRouteTypes(raw: string[] | string | undefined | null): string[] {
+  if (!raw) return []
+  if (Array.isArray(raw)) return raw
+  try { return JSON.parse(raw) as string[] } catch { return [] }
+}
+
 const paginatedChannels = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
   return adminStore.channels.slice(start, start + pageSize.value)
@@ -193,11 +248,12 @@ interface FormState {
   apiKey: string
   models: string[]
   aliases: Record<string, string>
+  modelTypes: Record<string, string[]>
 }
 
 const form = reactive<FormState>({
   name: '', provider: 'openai', baseUrl: '', apiKey: '',
-  models: [], aliases: {},
+  models: [], aliases: {}, modelTypes: {},
 })
 
 const rules = {
@@ -299,6 +355,7 @@ function resetForm() {
   form.apiKey = ''
   form.models = []
   form.aliases = {}
+  form.modelTypes = {}
   testStates.value = {}
 }
 
@@ -317,9 +374,11 @@ function openEdit(channel: Channel) {
   try {
     form.models = JSON.parse(channel.models || '[]')
     form.aliases = JSON.parse(channel.modelAliases || '{}')
+    form.modelTypes = JSON.parse(channel.modelTypes || '{}')
   } catch {
     form.models = []
     form.aliases = {}
+    form.modelTypes = {}
   }
   dialogVisible.value = true
 }
@@ -333,6 +392,9 @@ function removeModel(idx: number) {
   form.models.splice(idx, 1)
   if (removed && form.aliases[removed] !== undefined) {
     delete form.aliases[removed]
+  }
+  if (removed && form.modelTypes[removed] !== undefined) {
+    delete form.modelTypes[removed]
   }
 }
 
@@ -352,23 +414,27 @@ async function handleSave() {
     try {
       const cleanModels = form.models.map((m) => m.trim()).filter(Boolean)
       const cleanAliases: Record<string, string> = {}
+      const cleanModelTypes: Record<string, string[]> = {}
       for (const m of cleanModels) {
         if (form.aliases[m]?.trim()) {
           cleanAliases[m] = form.aliases[m].trim()
+        }
+        if (form.modelTypes[m]?.length) {
+          cleanModelTypes[m] = form.modelTypes[m]
         }
       }
 
       if (editingId.value) {
         const data: Record<string, unknown> = {
           name: form.name, provider: form.provider, baseUrl: form.baseUrl,
-          models: cleanModels, modelAliases: cleanAliases,
+          models: cleanModels, modelAliases: cleanAliases, modelTypes: cleanModelTypes,
         }
         if (form.apiKey) data.apiKey = form.apiKey
         await adminStore.updateChannel(editingId.value, data as Parameters<typeof adminStore.updateChannel>[1])
       } else {
         await adminStore.createChannel({
           name: form.name, baseUrl: form.baseUrl, apiKey: form.apiKey,
-          provider: form.provider, models: cleanModels, modelAliases: cleanAliases,
+          provider: form.provider, models: cleanModels, modelAliases: cleanAliases, modelTypes: cleanModelTypes,
         })
       }
       dialogVisible.value = false

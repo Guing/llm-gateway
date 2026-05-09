@@ -78,7 +78,13 @@
             <el-table-column label="实际模型名" min-width="160">
               <template #default="{ row }">
                 <code class="text-xs bg-gray-100 px-2 py-0.5 rounded">{{ row.actualModel }}</code>
-              </template>
+                <el-tag
+                  v-for="t in row.types"
+                  :key="t"
+                  size="small"
+                  class="ml-1 !text-xs"
+                >{{ MODEL_TYPE_LABELS[t] ?? t }}</el-tag>
+                </template>
             </el-table-column>
             <el-table-column label="优先级" width="160">
               <template #default="{ row }">
@@ -152,6 +158,7 @@ interface RouteRow {
   priority: number
   weight: number
   enabled: boolean
+  types: string[]
   // mutable copies for editing
   _priority: number
   _weight: number
@@ -184,6 +191,17 @@ const PROVIDERS: Record<string, 'primary' | 'warning' | 'info' | 'success'> = {
 }
 function providerTagType(p: string) { return PROVIDERS[p] ?? 'info' }
 
+const MODEL_TYPE_LABELS: Record<string, string> = {
+  'chat': '文本',
+  'vision': '视觉',
+  'function-calling': '工具调用',
+  'reasoning': '推理',
+  'embedding': '嵌入',
+  'image-generation': '图像生成',
+  'audio': '语音',
+  'video-generation': '视频生成',
+}
+
 async function loadRoutes() {
   loading.value = true
   try {
@@ -208,6 +226,11 @@ async function loadRoutes() {
           priority: r.priority,
           weight: r.weight,
           enabled: r.enabled,
+          types: (() => {
+            const raw = r.types as unknown as string | string[] | undefined
+            if (Array.isArray(raw)) return raw
+            try { return JSON.parse((raw as string) || '[]') as string[] } catch { return [] }
+          })(),
           _priority: r.priority,
           _weight: r.weight,
           _enabled: r.enabled,

@@ -7,17 +7,24 @@ import { AuthRequest, jwtAuth, requireAdmin } from '../middleware/authMiddleware
 const router: IRouter = Router()
 router.use(jwtAuth, requireAdmin)
 
-// Helper: sync ModelRoutes from channel models + aliases
-async function syncModelRoutes(channelId: number, models: string[], aliases: Record<string, string>) {
+// Helper: sync ModelRoutes from channel models + aliases + modelTypes
+async function syncModelRoutes(
+  channelId: number,
+  models: string[],
+  aliases: Record<string, string>,
+  modelTypes: Record<string, string[]> = {}
+) {
   const existing = await prisma.modelRoute.findMany({ where: { channelId } })
   const existingByActual = new Map(existing.map((r) => [r.actualModel, r]))
 
   for (const actualModel of models) {
     const virtualModel = aliases[actualModel] || actualModel
+    const types = modelTypes[actualModel] ?? []
+    const typesJson = JSON.stringify(types)
     const ex = existingByActual.get(actualModel)
     if (ex) {
-      if (ex.virtualModel !== virtualModel) {
-        await prisma.modelRoute.update({ where: { id: ex.id }, data: { virtualModel } })
+      if (ex.virtualModel !== virtualModel || ex.types !== typesJson) {
+        await prisma.modelRoute.update({ where: { id: ex.id }, data: { virtualModel, types: typesJson } })
       }
       existingByActual.delete(actualModel)
     } else {
@@ -27,7 +34,7 @@ async function syncModelRoutes(channelId: number, models: string[], aliases: Rec
       })
       const priority = maxRoute ? maxRoute.priority + 1 : 1
       await prisma.modelRoute.create({
-        data: { virtualModel, actualModel, channelId, priority, weight: 100 },
+        data: { virtualModel, actualModel, channelId, priority, weight: 100, types: typesJson },
       })
     }
   }
@@ -41,7 +48,7 @@ async function syncModelRoutes(channelId: number, models: string[], aliases: Rec
 const CHANNEL_SELECT = {
   id: true, name: true, baseUrl: true, provider: true,
   enabled: true, createdAt: true, updatedAt: true,
-  models: true, modelAliases: true, encryptedKey: true,
+  models: true, modelAliases: true, modelTypes: true, encryptedKey: true,
   _count: { select: { modelRoutes: true } },
 }
 
@@ -54,7 +61,7 @@ function withDecryptedKey<T extends { encryptedKey: string }>(ch: T): Omit<T, 'e
 
 const ROUTE_SELECT = {
   id: true, virtualModel: true, actualModel: true,
-  priority: true, weight: true, enabled: true,
+  priority: true, weight: true, enabled: true, types: true,
 }
 
 // GET /api/admin/channels
@@ -71,7 +78,7 @@ router.get('/', async (_req: AuthRequest, res: Response): Promise<void> => {
 
 // POST /api/admin/channels
 router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
-  const { name, baseUrl, apiKey, provider = 'openai', models = [], modelAliases = {} } = req.body
+  const { name, baseUrl, apiKey, provider = 'openai', models = [], modelAliases = {}, modelTypes = {} } = req.body
   if (!name || !baseUrl || !apiKey) {
     res.status(400).json({ error: 'name, baseUrl, and apiKey are required' })
     return
@@ -83,12 +90,13 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
       encryptedKey: encrypt(apiKey),
       models: JSON.stringify(models),
       modelAliases: JSON.stringify(modelAliases),
+      modelTypes: JSON.stringify(modelTypes),
     },
     select: CHANNEL_SELECT,
   })
 
   if (models.length > 0) {
-    await syncModelRoutes(channel.id, models, modelAliases)
+    await syncModelRoutes(channel.id, models, modelAliases, modelTypes)
   }
 
   const updated = await prisma.channel.findUnique({
@@ -101,7 +109,7 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
 // PUT /api/admin/channels/:id
 router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
   const id = parseInt(req.params.id, 10)
-  const { name, baseUrl, apiKey, provider, enabled, models, modelAliases } = req.body
+  const { name, baseUrl, apiKey, provider, enabled, models, modelAliases, modelTypes } = req.body
 
   const data: Record<string, unknown> = {}
   if (name !== undefined) data.name = name
@@ -111,15 +119,17 @@ router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
   if (apiKey) data.encryptedKey = encrypt(apiKey)
   if (models !== undefined) data.models = JSON.stringify(models)
   if (modelAliases !== undefined) data.modelAliases = JSON.stringify(modelAliases)
+  if (modelTypes !== undefined) data.modelTypes = JSON.stringify(modelTypes)
 
   await prisma.channel.update({ where: { id }, data })
 
-  if (models !== undefined || modelAliases !== undefined) {
+  if (models !== undefined || modelAliases !== undefined || modelTypes !== undefined) {
     const ch = await prisma.channel.findUnique({ where: { id } })
     if (ch) {
       const m: string[] = models !== undefined ? models : JSON.parse(ch.models || '[]')
       const a: Record<string, string> = modelAliases !== undefined ? modelAliases : JSON.parse(ch.modelAliases || '{}')
-      await syncModelRoutes(id, m, a)
+      const t: Record<string, string[]> = modelTypes !== undefined ? modelTypes : JSON.parse(ch.modelTypes || '{}')
+      await syncModelRoutes(id, m, a, t)
     }
   }
 
