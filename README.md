@@ -80,6 +80,7 @@ pnpm dev:frontend
 | `JWT_SECRET` | `change-me-in-production` | JWT 签名密钥 |
 | `ENCRYPTION_KEY` | `000...0`（64位十六进制） | AES-256-GCM 加密渠道 API Key 的密钥 |
 | `LOG_DIR` | `/logs`（容器）/ `./logs`（本地） | 日志文件目录 |
+| `LOG_VERBOSE` | `false` | 设为 `true` 时将完整上游请求体写入日志（调试用，生产慎用） |
 | `CORS_ORIGIN` | `http://localhost:5173,...` | 允许的 CORS 来源，逗号分隔 |
 | `ADMIN_EMAIL` | `admin@gateway.local` | 首次启动时创建的管理员邮箱 |
 | `ADMIN_PASSWORD` | `admin123` | 首次启动时创建的管理员密码 |

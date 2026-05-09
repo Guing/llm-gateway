@@ -128,18 +128,51 @@ export async function proxyRequest(
   }
 
   const sentAt = Date.now()
-  logger.debug(
-    `[Proxy] → POST ${endpoint}` +
+
+  // Build a concise summary of what's being sent upstream
+  const upstreamBodyAny = upstreamBody as Record<string, unknown>
+  const msgCount = Array.isArray(upstreamBodyAny.messages)
+    ? (upstreamBodyAny.messages as unknown[]).length : 0
+  const systemLen = typeof upstreamBodyAny.system === 'string'
+    ? upstreamBodyAny.system.length : 0
+  const hasTools = !!(upstreamBodyAny.tools || upstreamBodyAny.functions)
+  const maxTok = upstreamBodyAny.max_tokens ?? ''
+
+  logger.info(
+    `[Proxy] → ${upstreamFormat.toUpperCase()} ${endpoint}` +
     ` | channel=${route.channelName} model=${upstreamBody.model}` +
-    ` | stream=${!!(upstreamBody as Record<string, unknown>).stream}`
+    ` stream=${!!(upstreamBodyAny).stream}` +
+    ` msgs=${msgCount}${systemLen ? ` sys=${systemLen}chars` : ''}` +
+    `${hasTools ? ' tools=yes' : ''}${maxTok ? ` max_tokens=${maxTok}` : ''}`
   )
+  // Serialize once — reused for both verbose logging and the fetch body
+  const bodyStr = JSON.stringify(upstreamBody)
+  logger.verbose(`[Proxy] request body (${bodyStr.length} bytes): ${bodyStr.length > 2000 ? bodyStr.slice(0, 2000) + '…[truncated]' : bodyStr}`)
+
+  // Configurable upstream timeout (PROXY_TIMEOUT_MS env, default 120 s)
+  const proxyTimeoutMs = parseInt(process.env.PROXY_TIMEOUT_MS || '120000', 10)
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), proxyTimeoutMs)
 
   const response = await fetch(endpoint, {
     method: 'POST',
     headers,
-    body: JSON.stringify(upstreamBody),
-    // No timeout here — handled by the caller via Promise.race if needed
-  })
+    body: bodyStr,
+    signal: controller.signal,
+  }).then(
+    (r) => { clearTimeout(timeoutId); return r },
+    (fetchErr: Error) => {
+      clearTimeout(timeoutId)
+      const elapsed = Date.now() - sentAt
+      if (fetchErr.name === 'AbortError') {
+        logger.warn(`[Proxy] ← timeout (${proxyTimeoutMs}ms) | channel=${route.channelName} ${elapsed}ms`)
+        // "timeout" matches RouterService retry logic
+        throw new Error(`timeout after ${proxyTimeoutMs}ms`)
+      }
+      logger.warn(`[Proxy] ← fetch error | channel=${route.channelName} | ${fetchErr.message}`)
+      throw fetchErr
+    }
+  )
 
   const elapsed = Date.now() - sentAt
 
@@ -147,14 +180,14 @@ export async function proxyRequest(
     const errorText = await response.text()
     logger.warn(
       `[Proxy] ← ${response.status} ${response.statusText} | channel=${route.channelName} ${elapsed}ms` +
-      ` | ${errorText.slice(0, 300)}`
+      ` | ${errorText.slice(0, 500)}`
     )
     throw new Error(
       `Upstream ${route.channelName} returned ${response.status}: ${errorText}`
     )
   }
 
-  logger.debug(`[Proxy] ← ${response.status} OK | channel=${route.channelName} ${elapsed}ms`)
+  logger.info(`[Proxy] ← ${response.status} OK | channel=${route.channelName} ${elapsed}ms`)
   return response
 }
 

@@ -1,12 +1,12 @@
 import { Router, Response, IRouter } from 'express'
 import { prisma } from '../lib/prisma'
-import { generateApiKey, getKeyPrefix, hashApiKey } from '../lib/crypto'
+import { generateApiKey, getKeyPrefix, hashApiKey, encrypt, decrypt } from '../lib/crypto'
 import { AuthRequest, jwtAuth } from '../middleware/authMiddleware'
 
 const router: IRouter = Router()
 router.use(jwtAuth)
 
-// GET /api/keys — List current user's API keys
+// GET /api/keys — List current user's API keys (returns decrypted full key)
 router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
   const keys = await prisma.apiKey.findMany({
     where: { userId: req.user!.id },
@@ -15,12 +15,22 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
       id: true,
       name: true,
       keyPrefix: true,
+      encryptedKey: true,
       enabled: true,
       createdAt: true,
       lastUsedAt: true,
     },
   })
-  res.json(keys)
+  const result = keys.map((k) => ({
+    id: k.id,
+    name: k.name,
+    keyPrefix: k.keyPrefix,
+    plainKey: k.encryptedKey ? decrypt(k.encryptedKey) : null,
+    enabled: k.enabled,
+    createdAt: k.createdAt,
+    lastUsedAt: k.lastUsedAt,
+  }))
+  res.json(result)
 })
 
 // POST /api/keys — Generate a new API key
@@ -34,6 +44,7 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
   const plainKey = generateApiKey()
   const keyHash = hashApiKey(plainKey)
   const keyPrefix = getKeyPrefix(plainKey)
+  const encryptedKey = encrypt(plainKey)
 
   const apiKey = await prisma.apiKey.create({
     data: {
@@ -41,15 +52,15 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
       name: name.trim(),
       keyHash,
       keyPrefix,
+      encryptedKey,
     },
   })
 
-  // Return the plaintext key ONCE — it will never be shown again
   res.status(201).json({
     id: apiKey.id,
     name: apiKey.name,
     keyPrefix: apiKey.keyPrefix,
-    plainKey, // Only returned once
+    plainKey,
     enabled: apiKey.enabled,
     createdAt: apiKey.createdAt,
   })

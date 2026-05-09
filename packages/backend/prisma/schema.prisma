@@ -25,14 +25,15 @@ model User {
 }
 
 model ApiKey {
-  id          Int       @id @default(autoincrement())
-  userId      Int
-  name        String
-  keyHash     String    @unique  // SHA-256 hash of the full key
-  keyPrefix   String              // First 8 chars for display, e.g. "sk-gw-ab"
-  enabled     Boolean   @default(true)
-  createdAt   DateTime  @default(now())
-  lastUsedAt  DateTime?
+  id           Int       @id @default(autoincrement())
+  userId       Int
+  name         String
+  keyHash      String    @unique  // SHA-256 hash of the full key
+  keyPrefix    String              // First 12 chars for display, e.g. "sk-gw-abcdef"
+  encryptedKey String    @default("") // AES-256-GCM encrypted full key for display
+  enabled      Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  lastUsedAt   DateTime?
 
   user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   requestLogs RequestLog[]

@@ -82,22 +82,10 @@ async function handleGatewayRequest(
     routes.map((r) => `${r.channelName}/${r.actualModel}(p=${r.priority})`).join(', ')
   )
 
-  // Create initial log record
-  const logEntry = await prisma.requestLog.create({
-    data: {
-      userId: req.user?.id ?? null,
-      apiKeyId: req.apiKeyRecord?.id ?? null,
-      virtualModel,
-      requestBody: JSON.stringify(body),
-      requestedAt,
-      isStreaming,
-    },
-  })
-
   if (isStreaming) {
-    await handleStreaming(req, res, body, incomingFormat, routes, logEntry.id, virtualModel, requestedAt)
+    await handleStreaming(req, res, body, incomingFormat, routes, virtualModel, requestedAt)
   } else {
-    await handleNonStreaming(req, res, body, incomingFormat, routes, logEntry.id, virtualModel, requestedAt)
+    await handleNonStreaming(req, res, body, incomingFormat, routes, virtualModel, requestedAt)
   }
 }
 
@@ -110,10 +98,21 @@ async function handleNonStreaming(
   body: Record<string, unknown>,
   incomingFormat: 'openai' | 'anthropic',
   routes: RouteCandidate[],
-  logId: number,
   virtualModel: string,
   requestedAt: Date
 ): Promise<void> {
+  // Start log entry creation immediately — runs in parallel with upstream fetch
+  const logCreatePromise = prisma.requestLog.create({
+    data: {
+      userId: req.user?.id ?? null,
+      apiKeyId: req.apiKeyRecord?.id ?? null,
+      virtualModel,
+      requestBody: JSON.stringify(body),
+      requestedAt,
+      isStreaming: false,
+    },
+  })
+
   try {
     const { result: upstreamResponse, route } = await executeWithFallback(
       routes,
@@ -150,41 +149,47 @@ async function handleNonStreaming(
       completionTokens = usage?.output_tokens
     }
 
-    // Update log
-    await prisma.requestLog.update({
-      where: { id: logId },
-      data: {
-        channelId: route.channelId,
-        actualModel: route.actualModel,
-        responseBody: JSON.stringify(responseData),
-        completedAt,
-        duration,
-        promptTokens,
-        completionTokens,
-        statusCode: 200,
-      },
-    })
-
+    // Send response immediately — client does not wait for DB update
     res.json(responseData)
-    logger.info(
-      `[Gateway] ✓ #${logId} ${virtualModel} → ${route.channelName}/${route.actualModel}` +
-      ` | ${duration}ms | in=${promptTokens ?? '?'} out=${completionTokens ?? '?'}`
-    )
+
+    // Fire-and-forget: update log in background
+    logCreatePromise
+      .then((logEntry) =>
+        prisma.requestLog.update({
+          where: { id: logEntry.id },
+          data: {
+            channelId: route.channelId,
+            actualModel: route.actualModel,
+            responseBody: JSON.stringify(responseData),
+            completedAt,
+            duration,
+            promptTokens,
+            completionTokens,
+            statusCode: 200,
+          },
+        }).then(() =>
+          logger.info(
+            `[Gateway] ✓ #${logEntry.id} ${virtualModel} → ${route.channelName}/${route.actualModel}` +
+            ` | ${duration}ms | in=${promptTokens ?? '?'} out=${completionTokens ?? '?'}`
+          )
+        )
+      )
+      .catch((e) => logger.error(`[Gateway] Failed to save log for ${virtualModel}: ${(e as Error).message}`))
   } catch (err) {
     const errorMessage = (err as Error).message
     const completedAt = new Date()
     const duration = completedAt.getTime() - requestedAt.getTime()
-    await prisma.requestLog.update({
-      where: { id: logId },
-      data: {
-        completedAt,
-        duration,
-        statusCode: 500,
-        errorMessage,
-      },
-    })
-    logger.error(`[Gateway] ✗ #${logId} ${virtualModel} | ${duration}ms | ${errorMessage}`)
+    logger.error(`[Gateway] ✗ ${virtualModel} | ${duration}ms | ${errorMessage}`)
     res.status(500).json({ error: errorMessage })
+    // Best-effort log update (fire-and-forget)
+    logCreatePromise
+      .then((logEntry) =>
+        prisma.requestLog.update({
+          where: { id: logEntry.id },
+          data: { completedAt, duration, statusCode: 500, errorMessage },
+        })
+      )
+      .catch(() => {})
   }
 }
 
@@ -197,7 +202,6 @@ async function handleStreaming(
   body: Record<string, unknown>,
   incomingFormat: 'openai' | 'anthropic',
   routes: RouteCandidate[],
-  logId: number,
   virtualModel: string,
   requestedAt: Date
 ): Promise<void> {
@@ -206,6 +210,18 @@ async function handleStreaming(
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
   res.setHeader('X-Accel-Buffering', 'no')
+
+  // Start log entry creation in parallel with upstream fetch — eliminates serial DB delay on TTFB
+  const logCreatePromise = prisma.requestLog.create({
+    data: {
+      userId: req.user?.id ?? null,
+      apiKeyId: req.apiKeyRecord?.id ?? null,
+      virtualModel,
+      requestBody: JSON.stringify(body),
+      requestedAt,
+      isStreaming: true,
+    },
+  })
 
   let selectedRoute: RouteCandidate | undefined
 
@@ -226,12 +242,17 @@ async function handleStreaming(
     // When streaming completes, save the full log
     interceptor.once('done', async (data: { fullContent: string; promptTokens?: number; completionTokens?: number }) => {
       const completedAt = new Date()
+      const duration = completedAt.getTime() - requestedAt.getTime()
+
+      // logCreatePromise is long resolved by the time the stream ends
+      const logEntry = await logCreatePromise.catch(() => null)
+      if (!logEntry) return
 
       // Build a synthetic response body for storage
       let responseBody: Record<string, unknown>
       if (incomingFormat === 'openai') {
         responseBody = {
-          id: `chatcmpl-${logId}`,
+          id: `chatcmpl-${logEntry.id}`,
           object: 'chat.completion',
           created: Math.floor(requestedAt.getTime() / 1000),
           model: virtualModel,
@@ -261,21 +282,21 @@ async function handleStreaming(
       }
 
       await prisma.requestLog.update({
-        where: { id: logId },
+        where: { id: logEntry.id },
         data: {
           channelId: selectedRoute!.channelId,
           actualModel: selectedRoute!.actualModel,
           responseBody: JSON.stringify(responseBody),
           completedAt,
-          duration: completedAt.getTime() - requestedAt.getTime(),
+          duration,
           promptTokens: data.promptTokens ?? null,
           completionTokens: data.completionTokens ?? null,
           statusCode: 200,
         },
       }).catch(() => {})
       logger.info(
-        `[Gateway] ✓ #${logId} ${virtualModel} → ${selectedRoute!.channelName}/${selectedRoute!.actualModel}` +
-        ` [stream] | ${completedAt.getTime() - requestedAt.getTime()}ms` +
+        `[Gateway] ✓ #${logEntry.id} ${virtualModel} → ${selectedRoute!.channelName}/${selectedRoute!.actualModel}` +
+        ` [stream] | ${duration}ms` +
         ` | in=${data.promptTokens ?? '?'} out=${data.completionTokens ?? '?'}`
       )
     })
@@ -290,32 +311,29 @@ async function handleStreaming(
     upstreamResponse.body.on('error', async (err: Error) => {
       const completedAt = new Date()
       const duration = completedAt.getTime() - requestedAt.getTime()
-      await prisma.requestLog.update({
-        where: { id: logId },
-        data: {
-          completedAt,
-          duration,
-          statusCode: 500,
-          errorMessage: err.message,
-        },
-      }).catch(() => {})
-      logger.error(`[Gateway] ✗ #${logId} ${virtualModel} [stream pipe error] | ${duration}ms | ${err.message}`)
+      const logEntry = await logCreatePromise.catch(() => null)
+      if (logEntry) {
+        await prisma.requestLog.update({
+          where: { id: logEntry.id },
+          data: { completedAt, duration, statusCode: 500, errorMessage: err.message },
+        }).catch(() => {})
+      }
+      logger.error(`[Gateway] ✗ ${virtualModel} [stream pipe error] | ${duration}ms | ${err.message}`)
     })
   } catch (err) {
     const errorMessage = (err as Error).message
     const completedAt = new Date()
     const duration = completedAt.getTime() - requestedAt.getTime()
-    await prisma.requestLog.update({
-      where: { id: logId },
-      data: {
-        completedAt,
-        duration,
-        statusCode: 500,
-        errorMessage,
-      },
-    }).catch(() => {})
-    logger.error(`[Gateway] ✗ #${logId} ${virtualModel} [stream] | ${duration}ms | ${errorMessage}`)
-
+    logger.error(`[Gateway] ✗ ${virtualModel} [stream] | ${duration}ms | ${errorMessage}`)
+    // Best-effort log update (fire-and-forget)
+    logCreatePromise
+      .then((logEntry) =>
+        prisma.requestLog.update({
+          where: { id: logEntry.id },
+          data: { completedAt, duration, statusCode: 500, errorMessage },
+        })
+      )
+      .catch(() => {})
     // SSE error message
     res.write(`data: ${JSON.stringify({ error: errorMessage })}\n\n`)
     res.end()

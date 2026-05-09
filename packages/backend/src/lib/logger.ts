@@ -99,10 +99,10 @@ function write(level: LogLevel, message: string, meta?: unknown) {
     process.stdout.write(consoleLine)
   }
 
-  // File always plain text
+  // File always plain text — async write to avoid blocking the event loop
   try {
     ensureLogDir()
-    fs.appendFileSync(getLogFile(), formatPlain(level, message, meta), 'utf8')
+    fs.appendFile(getLogFile(), formatPlain(level, message, meta), 'utf8', () => { /* fire-and-forget */ })
   } catch {
     // ignore file write errors to avoid crashing the app
   }
@@ -118,5 +118,9 @@ export const logger = {
   error: (message: string, meta?: unknown) => write('ERROR', message, meta),
   debug: (message: string, meta?: unknown) => {
     if (process.env.NODE_ENV !== 'production') write('DEBUG', message, meta)
+  },
+  /** Only logs when LOG_VERBOSE=true — use for detailed request/response bodies */
+  verbose: (message: string, meta?: unknown) => {
+    if (process.env.LOG_VERBOSE === 'true') write('DEBUG', message, meta)
   },
 }

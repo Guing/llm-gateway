@@ -7,31 +7,29 @@
       </el-button>
     </div>
 
-    <!-- New key alert -->
-    <el-alert
-      v-if="newKeyPlain"
-      type="success"
-      class="mb-4"
-      :closable="false"
-    >
-      <template #default>
-        <div>
-          <p class="font-semibold mb-1">✅ 新 API Key 已生成（请立即保存，之后无法再查看）</p>
-          <div class="flex items-center gap-2 bg-gray-100 rounded px-3 py-2">
-            <code class="flex-1 text-sm break-all text-gray-800 select-all">{{ newKeyPlain }}</code>
-            <el-button size="small" type="primary" @click="copyKey">复制</el-button>
-          </div>
-          <el-button size="small" class="mt-2" @click="newKeyPlain = ''">我已保存，关闭提示</el-button>
-        </div>
-      </template>
-    </el-alert>
-
     <el-card shadow="never" class="border">
       <el-table :data="paginatedKeys" stripe v-loading="loading">
-        <el-table-column prop="name" label="名称" min-width="160" />
-        <el-table-column label="Key (前缀)" min-width="160">
+        <el-table-column prop="name" label="名称" min-width="140" />
+        <el-table-column label="API Key" min-width="320">
           <template #default="{ row }">
-            <code class="text-sm bg-gray-100 px-2 py-0.5 rounded">{{ row.keyPrefix }}…</code>
+            <div v-if="row.plainKey" class="flex items-center gap-2">
+              <code class="text-sm bg-gray-100 px-2 py-0.5 rounded flex-1 break-all select-all">
+                {{ visibleKeys.has(row.id) ? row.plainKey : maskKey(row.plainKey) }}
+              </code>
+              <el-tooltip :content="visibleKeys.has(row.id) ? '隐藏' : '显示'" placement="top">
+                <el-button size="small" text @click="toggleVisible(row.id)">
+                  <el-icon><View v-if="!visibleKeys.has(row.id)" /><Hide v-else /></el-icon>
+                </el-button>
+              </el-tooltip>
+              <el-tooltip content="复制" placement="top">
+                <el-button size="small" text @click="copyKey(row.plainKey)">
+                  <el-icon><CopyDocument /></el-icon>
+                </el-button>
+              </el-tooltip>
+            </div>
+            <el-tooltip v-else content="该 Key 在加密存储功能上线前创建，原始值已无法恢复，请删除后重新创建" placement="top">
+              <span class="text-xs text-gray-400 italic cursor-default">{{ row.keyPrefix }}… <span class="text-orange-400">[旧密钥，请重新创建]</span></span>
+            </el-tooltip>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="80">
@@ -90,12 +88,14 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import type { FormInstance } from 'element-plus'
+import { View, Hide, CopyDocument } from '@element-plus/icons-vue'
 import client from '@/api/client'
 
 interface ApiKey {
   id: number
   name: string
   keyPrefix: string
+  plainKey: string | null
   enabled: boolean
   createdAt: string
   lastUsedAt: string | null
@@ -111,13 +111,25 @@ const paginatedKeys = computed(() => {
 })
 const saving = ref(false)
 const dialogVisible = ref(false)
-const newKeyPlain = ref('')
 const formRef = ref<FormInstance>()
 const form = reactive({ name: '' })
 const rules = { name: [{ required: true, message: '请输入名称', trigger: 'blur' }] }
 
+// Track which key IDs are currently visible (unmasked)
+const visibleKeys = ref<Set<number>>(new Set())
+
 function formatDate(d: string) {
   return new Date(d).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
+function maskKey(key: string): string {
+  if (!key) return '••••••••'
+  return key.substring(0, 12) + '••••••••••••••••••••'
+}
+
+function toggleVisible(id: number) {
+  if (visibleKeys.value.has(id)) visibleKeys.value.delete(id)
+  else visibleKeys.value.add(id)
 }
 
 async function fetchKeys() {
@@ -137,10 +149,10 @@ async function handleCreate() {
     if (!valid) return
     saving.value = true
     try {
-      const res = await client.post('/keys', { name: form.name })
-      newKeyPlain.value = res.data.plainKey
+      await client.post('/keys', { name: form.name })
       dialogVisible.value = false
       await fetchKeys()
+      ElMessage.success('API Key 已生成')
     } catch (err: unknown) {
       const e = err as { response?: { data?: { error?: string } } }
       ElMessage.error(e.response?.data?.error ?? '生成失败')
@@ -162,8 +174,8 @@ async function handleDelete(id: number) {
   ElMessage.success('已删除')
 }
 
-function copyKey() {
-  navigator.clipboard.writeText(newKeyPlain.value)
+function copyKey(key: string) {
+  navigator.clipboard.writeText(key)
   ElMessage.success('已复制到剪贴板')
 }
 

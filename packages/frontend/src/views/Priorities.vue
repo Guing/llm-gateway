@@ -41,7 +41,7 @@
             </div>
           </template>
 
-          <el-table :data="group.routes" size="small">
+          <el-table :data="group.routes" size="small" row-key="id">
             <el-table-column label="上游渠道" min-width="140">
               <template #default="{ row }">
                 <el-tag size="small" :type="providerTagType(row.channelProvider)">{{ row.channelName }}</el-tag>
@@ -140,13 +140,12 @@ const groups = computed<RouteGroup[]>(() => {
     if (!map.has(r.virtualModel)) map.set(r.virtualModel, [])
     map.get(r.virtualModel)!.push(r)
   }
-  // Sort each group by priority desc
-  for (const [, list] of map) {
-    list.sort((a, b) => b._priority - a._priority)
-  }
   return [...map.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([virtualModel, routes]) => ({ virtualModel, routes }))
+    .map(([virtualModel, routes]) => ({
+      virtualModel,
+      routes: routes.slice().sort((a, b) => b._priority - a._priority),
+    }))
 })
 
 const PROVIDERS: Record<string, 'primary' | 'warning' | 'info' | 'success'> = {

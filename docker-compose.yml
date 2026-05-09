@@ -20,6 +20,8 @@ services:
       # Optional: customize admin credentials on first boot
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@gateway.local}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      # Optional: set LOG_VERBOSE=true to log full upstream request bodies (useful for debugging)
+      # LOG_VERBOSE: "true"
       # Optional: restrict CORS origins (comma-separated)
       # CORS_ORIGIN: https://your-domain.com
     restart: unless-stopped
