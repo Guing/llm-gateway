@@ -51,6 +51,7 @@ const allNavItems = [
   { path: '/users', label: '用户管理', icon: 'User', adminOnly: true },
   { path: '/api-keys', label: 'API Keys', icon: 'Key', adminOnly: false },
   { path: '/logs', label: '聊天记录', icon: 'Document', adminOnly: false },
+  { path: '/system-logs', label: '系统日志', icon: 'List', adminOnly: true },
 ]
 
 const navItems = computed(() =>

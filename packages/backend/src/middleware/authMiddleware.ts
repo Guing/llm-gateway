@@ -11,21 +11,25 @@ export interface AuthRequest extends Request {
 /**
  * JWT authentication middleware.
  * Expects: Authorization: Bearer <jwt>
+ * Also accepts: ?token=<jwt> query param (for SSE EventSource connections)
  */
 export function jwtAuth(
   req: AuthRequest,
   res: Response,
   next: NextFunction
 ): void {
+  // Support ?token= query param for SSE (EventSource cannot set headers)
+  const queryToken = req.query.token as string | undefined
   const authHeader = req.headers.authorization
-  if (!authHeader?.startsWith('Bearer ')) {
+  const rawToken = queryToken || (authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null)
+
+  if (!rawToken) {
     res.status(401).json({ error: 'Missing or invalid Authorization header' })
     return
   }
 
-  const token = authHeader.slice(7)
   try {
-    const payload = verifyToken(token)
+    const payload = verifyToken(rawToken)
     req.user = { ...payload, id: payload.userId }
     next()
   } catch {
