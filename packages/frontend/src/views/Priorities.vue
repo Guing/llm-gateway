@@ -10,6 +10,34 @@
       </el-button>
     </div>
 
+    <!-- Fallback 机制说明 + 全局开关 -->
+    <el-card shadow="never" class="mb-6 border border-blue-100 bg-blue-50/40">
+      <div class="flex items-start gap-3">
+        <el-icon class="text-blue-500 mt-0.5 shrink-0" size="18"><InfoFilled /></el-icon>
+        <div class="flex-1 min-w-0">
+          <div class="font-semibold text-blue-700 mb-1">Fallback 机制说明</div>
+          <ul class="text-sm text-blue-600 space-y-0.5 list-disc list-inside">
+            <li>优先级高的上游渠道优先使用；同优先级按权重随机分配</li>
+            <li>遇到可重试错误（429 / 限速 / 超时 / 502 / 503 / 500 / 连接失败 / 配额耗尽）时，自动切换到下一个渠道</li>
+            <li>遇到非重试错误（400 参数错误 / 401 认证失败 / 404 模型不存在）时，默认直接返回错误，不继续尝试</li>
+            <li>所有优先级层全部失败后，返回最后一次的错误信息给客户端</li>
+          </ul>
+          <el-divider class="my-3" />
+          <div class="flex items-center gap-3">
+            <span class="text-sm font-medium text-gray-700">任何错误都触发 Fallback</span>
+            <el-switch
+              v-model="fallbackOnAnyError"
+              :loading="settingsLoading"
+              active-text="开启"
+              inactive-text="关闭"
+              @change="saveFallbackSetting"
+            />
+            <span class="text-xs text-gray-400">开启后，所有上游错误（包括 400/401/404）均会尝试切换到下一个渠道</span>
+          </div>
+        </div>
+      </div>
+    </el-card>
+
     <div v-if="loading" class="text-center py-16 text-gray-400">
       <el-icon class="animate-spin" size="32"><Loading /></el-icon>
       <p class="mt-2">加载中...</p>
@@ -104,12 +132,15 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { InfoFilled } from '@element-plus/icons-vue'
 import { useAdminStore } from '@/stores/admin'
 import client from '@/api/client'
 
 const adminStore = useAdminStore()
 const loading = ref(false)
 const saving = ref(false)
+const settingsLoading = ref(false)
+const fallbackOnAnyError = ref(false)
 
 interface RouteRow {
   id: number
@@ -156,8 +187,14 @@ function providerTagType(p: string) { return PROVIDERS[p] ?? 'info' }
 async function loadRoutes() {
   loading.value = true
   try {
-    // Fetch channels (includes modelRoutes)
-    await adminStore.fetchChannels()
+    // Load routes and settings in parallel
+    const [, settingsRes] = await Promise.all([
+      adminStore.fetchChannels(),
+      client.get('/admin/settings').catch(() => null),
+    ])
+    if (settingsRes) {
+      fallbackOnAnyError.value = !!(settingsRes.data as { fallbackOnAnyError?: boolean }).fallbackOnAnyError
+    }
     const newRows: RouteRow[] = []
     for (const ch of adminStore.channels) {
       for (const r of ch.modelRoutes ?? []) {
@@ -180,6 +217,20 @@ async function loadRoutes() {
     rows.value = newRows
   } finally {
     loading.value = false
+  }
+}
+
+async function saveFallbackSetting(val: boolean | string | number) {
+  settingsLoading.value = true
+  try {
+    await client.put('/admin/settings', { fallbackOnAnyError: val })
+    ElMessage.success(val ? '已开启：任何错误触发 Fallback' : '已关闭：仅可重试错误触发 Fallback')
+  } catch {
+    ElMessage.error('设置保存失败')
+    // Revert
+    fallbackOnAnyError.value = !val
+  } finally {
+    settingsLoading.value = false
   }
 }
 

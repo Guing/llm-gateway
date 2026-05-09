@@ -1,6 +1,7 @@
 import { prisma } from '../lib/prisma'
 import { decrypt } from '../lib/crypto'
 import { logger } from '../lib/logger'
+import { getSettings } from '../lib/settings'
 
 export interface RouteCandidate {
   routeId: number
@@ -108,12 +109,19 @@ export async function executeWithFallback<T>(
         lastError = err as Error
         const message = lastError.message || ''
         // Only fallback on retriable errors
+        // If "fallback on any error" is enabled, every failure retries
+        if (getSettings().fallbackOnAnyError) {
+          logger.warn(`[Router] Channel "${route.channelName}" failed (${message}), trying next... [fallbackOnAnyError=true]`)
+          continue
+        }
+
         const isRetriable =
           message.includes('429') ||
           message.includes('rate limit') ||
           message.includes('timeout') ||
           message.includes('ECONNREFUSED') ||
           message.includes('ECONNRESET') ||
+          message.includes('500') ||
           message.includes('503') ||
           message.includes('502') ||
           // Quota exhausted — try next channel if available

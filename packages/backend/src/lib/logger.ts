@@ -40,14 +40,14 @@ function getDateStr(): string {
   return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`
 }
 
-function getLogFile(): string {
-  return path.join(LOG_DIR, `${getDateStr()}.log`)
-}
-
+// Cached flag — ensureLogDir is sync but only needs to run once
+let logDirReady = false
 function ensureLogDir() {
+  if (logDirReady) return
   if (!fs.existsSync(LOG_DIR)) {
     fs.mkdirSync(LOG_DIR, { recursive: true })
   }
+  logDirReady = true
 }
 
 function purgeOldLogs() {
@@ -87,6 +87,68 @@ function formatColored(level: LogLevel, message: string, meta?: unknown): string
   return `${DIM}${formatTimestamp()}${RESET} ${color}[${LEVEL_LABEL[level]}]${RESET} ${message}${DIM}${metaStr}${RESET}\n`
 }
 
+// ---------------------------------------------------------------------------
+// Async write queue — collects log lines and flushes to disk every FLUSH_MS
+// (or when the buffer exceeds MAX_BYTES). Each flush is a single
+// fs.appendFile call, batching N lines into one syscall while staying simple
+// and reliable (no silent stream-error data loss).
+// ---------------------------------------------------------------------------
+class DailyWriteQueue {
+  private pending: string[] = []
+  private pendingBytes = 0
+  private timer: NodeJS.Timeout | null = null
+
+  private static readonly FLUSH_MS = 50
+  private static readonly MAX_BYTES = 64 * 1024
+
+  enqueue(line: string): void {
+    this.pending.push(line)
+    this.pendingBytes += line.length
+    if (this.pendingBytes >= DailyWriteQueue.MAX_BYTES) {
+      this.flush()
+    } else if (!this.timer) {
+      this.timer = setTimeout(() => this.flush(), DailyWriteQueue.FLUSH_MS)
+    }
+  }
+
+  flush(): void {
+    if (this.timer) { clearTimeout(this.timer); this.timer = null }
+    if (this.pending.length === 0) return
+
+    const content = this.pending.join('')
+    this.pending = []
+    this.pendingBytes = 0
+
+    const logFile = path.join(LOG_DIR, `${getDateStr()}.log`)
+    try {
+      ensureLogDir()
+    } catch (e) {
+      process.stderr.write(`[logger] Cannot create log dir: ${(e as Error).message}\n`)
+      return
+    }
+    fs.appendFile(logFile, content, 'utf8', (err) => {
+      if (err) process.stderr.write(`[logger] Write failed (${logFile}): ${err.message}\n`)
+    })
+  }
+
+  /** Flush pending lines before process exit so no lines are lost. */
+  destroy(): void {
+    this.flush()
+  }
+}
+
+const queue = new DailyWriteQueue()
+
+// Flush remaining buffer on clean shutdown so no lines are lost
+process.once('SIGTERM', () => queue.destroy())
+process.once('SIGINT',  () => queue.destroy())
+
+// ---------------------------------------------------------------------------
+// Initialise at startup (sync is fine here — before any requests)
+// ---------------------------------------------------------------------------
+ensureLogDir()
+purgeOldLogs()
+
 function write(level: LogLevel, message: string, meta?: unknown) {
   const useColor = (level === 'ERROR' ? process.stderr : process.stdout).isTTY
   const consoleLine = useColor
@@ -99,18 +161,9 @@ function write(level: LogLevel, message: string, meta?: unknown) {
     process.stdout.write(consoleLine)
   }
 
-  // File always plain text — async write to avoid blocking the event loop
-  try {
-    ensureLogDir()
-    fs.appendFile(getLogFile(), formatPlain(level, message, meta), 'utf8', () => { /* fire-and-forget */ })
-  } catch {
-    // ignore file write errors to avoid crashing the app
-  }
+  // File: enqueue — zero blocking, batched flush every 50 ms
+  queue.enqueue(formatPlain(level, message, meta))
 }
-
-// Purge old logs once at startup
-ensureLogDir()
-purgeOldLogs()
 
 export const logger = {
   info:  (message: string, meta?: unknown) => write('INFO',  message, meta),
