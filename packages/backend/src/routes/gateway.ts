@@ -1,4 +1,5 @@
 import { Router, Response, IRouter } from 'express'
+import { pipeline } from 'stream'
 import { prisma } from '../lib/prisma'
 import { logger } from '../lib/logger'
 import { AuthRequest, apiKeyAuth } from '../middleware/authMiddleware'
@@ -306,22 +307,60 @@ async function handleStreaming(
     // Pipe: upstream body → SSE interceptor (passthrough) → client
     const transform = interceptor.createTransform(upstreamFormat)
 
-    upstreamResponse.body
-      .pipe(transform)
-      .pipe(res)
+    // Track whether the stream completed successfully via the 'done' event.
+    // This prevents double-logging when pipeline() callback fires after done.
+    let streamCompleted = false
+    interceptor.once('done', () => { streamCompleted = true })
 
-    upstreamResponse.body.on('error', async (err: Error) => {
-      const completedAt = new Date()
-      const duration = completedAt.getTime() - requestedAt.getTime()
-      const logEntry = await logCreatePromise.catch(() => null)
-      if (logEntry) {
-        await prisma.requestLog.update({
-          where: { id: logEntry.id },
-          data: { completedAt, duration, statusCode: 500, errorMessage: err.message },
-        }).catch(() => {})
+    // Abort upstream body if the client disconnects before the stream ends.
+    req.on('close', () => {
+      if (!streamCompleted && !res.writableEnded) {
+        // node-fetch v2 body is a Node.js Readable at runtime; cast to access .destroy()
+        ;(upstreamResponse.body as import('stream').Readable).destroy(new Error('client disconnected'))
       }
-      logger.error(`[Gateway] ✗ ${virtualModel} [stream pipe error] | ${duration}ms | ${err.message}`)
     })
+
+    // pipeline() propagates errors through all streams and guarantees cleanup,
+    // unlike .pipe() which silently stalls when the destination is destroyed.
+    pipeline(
+      upstreamResponse.body,
+      transform,
+      res,
+      async (pipelineErr) => {
+        if (!pipelineErr || streamCompleted) return
+
+        const completedAt = new Date()
+        const duration = completedAt.getTime() - requestedAt.getTime()
+        const errMsg = (pipelineErr as NodeJS.ErrnoException).message || 'stream pipeline error'
+        const errCode = (pipelineErr as NodeJS.ErrnoException).code ?? ''
+
+        // Distinguish a normal client disconnect from a real upstream/pipe error.
+        const isClientDisconnect =
+          errMsg.includes('client disconnected') ||
+          errCode === 'ERR_STREAM_DESTROYED' ||
+          errCode === 'ECONNRESET' ||
+          errCode === 'EPIPE'
+
+        if (isClientDisconnect) {
+          logger.info(`[Gateway] ⚡ ${virtualModel} [stream] client disconnected | ${duration}ms`)
+        } else {
+          logger.error(`[Gateway] ✗ ${virtualModel} [stream pipe error] | ${duration}ms | ${errMsg}`)
+        }
+
+        const logEntry = await logCreatePromise.catch(() => null)
+        if (logEntry) {
+          await prisma.requestLog.update({
+            where: { id: logEntry.id },
+            data: {
+              completedAt,
+              duration,
+              statusCode: isClientDisconnect ? 499 : 500,
+              errorMessage: errMsg,
+            },
+          }).catch(() => {})
+        }
+      }
+    )
   } catch (err) {
     const errorMessage = (err as Error).message
     const completedAt = new Date()
