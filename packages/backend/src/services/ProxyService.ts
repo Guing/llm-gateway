@@ -108,6 +108,19 @@ function sanitizeRequestForRoute(
     }
   }
 
+  // ── Reasoning: strip reasoning_content from assistant messages (special case) ─
+  // When a conversation history passes through a reasoning model, assistant messages
+  // accumulate a `reasoning_content` field (the model's chain-of-thought).  Non-reasoning
+  // upstreams (e.g. Mistral, GPT-4o) reject requests containing this field with 422.
+  // We must strip it from every assistant message when the target route lacks 'reasoning'.
+  if (!types.includes('reasoning') && Array.isArray(b.messages)) {
+    b.messages = (b.messages as Array<Record<string, unknown>>).map((msg) => {
+      if (msg.role !== 'assistant' || msg.reasoning_content === undefined) return msg
+      const { reasoning_content: _rc, ...rest } = msg
+      return rest
+    })
+  }
+
   // ── Vision: message-content filtering (special case) ───────────────────────
   // When route doesn't declare 'vision', strip image content from messages.
   // Image parts are replaced with a text placeholder so the request still makes

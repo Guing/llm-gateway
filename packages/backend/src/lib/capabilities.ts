@@ -86,7 +86,8 @@ export const CAPABILITY_DEGRADATION_MATRIX: Record<CapabilityType, CapabilityRul
   },
 
   // ── Extended reasoning ─────────────────────────────────────────────────────
-  // Falls back to chat by stripping reasoning_effort / thinking params.
+  // Falls back to chat by stripping reasoning_effort / thinking params AND
+  // reasoning_content from assistant messages in conversation history.
   reasoning: {
     canDegradeTo: ['chat'],
     usesChatEndpoint: true,
@@ -100,6 +101,10 @@ export const CAPABILITY_DEGRADATION_MATRIX: Record<CapabilityType, CapabilityRul
       /extended thinking is not/i,
       /thinking is not supported/i,
       /unsupported.*reasoning/i,
+      // reasoning_content in message history rejected by non-reasoning models
+      /extra inputs are not permitted.*reasoning_content/i,
+      /reasoning_content.*extra inputs/i,
+      /reasoning_content.*not permitted/i,
     ],
   },
 
