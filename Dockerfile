@@ -37,8 +37,17 @@ RUN pnpm deploy --filter backend --prod --legacy /deploy/backend
 
 # Copy Prisma generated client (query engine binary) into the deploy bundle.
 # pnpm deploy creates a flat node_modules but does NOT copy .prisma/ — it is a
-# generated artifact written directly by `prisma generate`, not a pnpm-managed package.
-RUN cp -r /app/packages/backend/node_modules/.prisma /deploy/backend/node_modules/.prisma
+# generated artifact written by `prisma generate` into the pnpm virtual store.
+# We search the entire /app tree (excluding /deploy) to find it regardless of
+# the exact pnpm store depth, then copy it to the expected runtime location.
+RUN PRISMA_SRC=$(find /app -path "*/node_modules/.prisma" -type d 2>/dev/null \
+      | grep -v '/deploy/' | head -1) && \
+    if [ -z "$PRISMA_SRC" ]; then \
+      echo "ERROR: .prisma not found anywhere under /app — prisma generate may have failed"; \
+      exit 1; \
+    fi && \
+    echo "Copying .prisma from: $PRISMA_SRC" && \
+    cp -r "$PRISMA_SRC" /deploy/backend/node_modules/.prisma
 # ── Stage 3: Production image ─────────────────────────────────────────────────
 FROM node:22-alpine
 WORKDIR /app
