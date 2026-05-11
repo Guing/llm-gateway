@@ -35,9 +35,10 @@ RUN pnpm --filter backend build
 # Create a portable production deployment bundle (flat node_modules, prod deps only)
 RUN pnpm deploy --filter backend --prod --legacy /deploy/backend
 
-# Copy Prisma generated binary from pnpm virtual store into deploy dir
-RUN PRISMA_SRC=$(find /app/node_modules/.pnpm -maxdepth 3 -name ".prisma" -type d | head -1) && \
-    cp -r "$PRISMA_SRC" /deploy/backend/node_modules/.prisma
+# Copy Prisma generated client (query engine binary) into the deploy bundle.
+# pnpm deploy creates a flat node_modules but does NOT copy .prisma/ — it is a
+# generated artifact written directly by `prisma generate`, not a pnpm-managed package.
+RUN cp -r /app/packages/backend/node_modules/.prisma /deploy/backend/node_modules/.prisma
 # ── Stage 3: Production image ─────────────────────────────────────────────────
 FROM node:22-alpine
 WORKDIR /app
