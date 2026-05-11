@@ -7,12 +7,26 @@ import { AuthRequest, jwtAuth, requireAdmin } from '../middleware/authMiddleware
 const router: IRouter = Router()
 router.use(jwtAuth, requireAdmin)
 
-// Helper: sync ModelRoutes from channel models + aliases + modelTypes
+export interface ModelRouteAdvancedConfig {
+  priority?: number
+  weight?: number
+  enabled?: boolean
+  config?: {
+    timeout?: number
+    maxRetries?: number
+    customHeaders?: Record<string, string>
+    maxTokens?: number
+    contextLength?: number
+  }
+}
+
+// Helper: sync ModelRoutes from channel models + aliases + modelTypes + modelAdvanced
 async function syncModelRoutes(
   channelId: number,
   models: string[],
   aliases: Record<string, string>,
-  modelTypes: Record<string, string[]> = {}
+  modelTypes: Record<string, string[]> = {},
+  modelAdvanced: Record<string, ModelRouteAdvancedConfig> = {}
 ) {
   const existing = await prisma.modelRoute.findMany({ where: { channelId } })
   const existingByActual = new Map(existing.map((r) => [r.actualModel, r]))
@@ -21,10 +35,29 @@ async function syncModelRoutes(
     const virtualModel = aliases[actualModel] || actualModel
     const types = modelTypes[actualModel] ?? []
     const typesJson = JSON.stringify(types)
+    const adv = modelAdvanced[actualModel] ?? {}
+    const configJson = JSON.stringify(adv.config ?? {})
     const ex = existingByActual.get(actualModel)
     if (ex) {
-      if (ex.virtualModel !== virtualModel || ex.types !== typesJson) {
-        await prisma.modelRoute.update({ where: { id: ex.id }, data: { virtualModel, types: typesJson } })
+      const needsUpdate =
+        ex.virtualModel !== virtualModel ||
+        ex.types !== typesJson ||
+        (adv.priority !== undefined && ex.priority !== adv.priority) ||
+        (adv.weight !== undefined && ex.weight !== adv.weight) ||
+        (adv.enabled !== undefined && ex.enabled !== adv.enabled) ||
+        ex.config !== configJson
+      if (needsUpdate) {
+        await prisma.modelRoute.update({
+          where: { id: ex.id },
+          data: {
+            virtualModel,
+            types: typesJson,
+            ...(adv.priority !== undefined ? { priority: adv.priority } : {}),
+            ...(adv.weight !== undefined ? { weight: adv.weight } : {}),
+            ...(adv.enabled !== undefined ? { enabled: adv.enabled } : {}),
+            config: configJson,
+          },
+        })
       }
       existingByActual.delete(actualModel)
     } else {
@@ -32,9 +65,18 @@ async function syncModelRoutes(
       const maxRoute = await prisma.modelRoute.findFirst({
         orderBy: { priority: 'desc' },
       })
-      const priority = maxRoute ? maxRoute.priority + 1 : 1
+      const defaultPriority = maxRoute ? maxRoute.priority + 1 : 1
       await prisma.modelRoute.create({
-        data: { virtualModel, actualModel, channelId, priority, weight: 100, types: typesJson },
+        data: {
+          virtualModel,
+          actualModel,
+          channelId,
+          priority: adv.priority ?? defaultPriority,
+          weight: adv.weight ?? 100,
+          enabled: adv.enabled ?? true,
+          types: typesJson,
+          config: configJson,
+        },
       })
     }
   }
@@ -61,7 +103,7 @@ function withDecryptedKey<T extends { encryptedKey: string }>(ch: T): Omit<T, 'e
 
 const ROUTE_SELECT = {
   id: true, virtualModel: true, actualModel: true,
-  priority: true, weight: true, enabled: true, types: true,
+  priority: true, weight: true, enabled: true, types: true, config: true,
 }
 
 // GET /api/admin/channels
@@ -78,7 +120,7 @@ router.get('/', async (_req: AuthRequest, res: Response): Promise<void> => {
 
 // POST /api/admin/channels
 router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
-  const { name, baseUrl, apiKey, provider = 'openai', models = [], modelAliases = {}, modelTypes = {} } = req.body
+  const { name, baseUrl, apiKey, provider = 'openai', models = [], modelAliases = {}, modelTypes = {}, modelAdvanced = {} } = req.body
   if (!name || !baseUrl || !apiKey) {
     res.status(400).json({ error: 'name, baseUrl, and apiKey are required' })
     return
@@ -96,7 +138,7 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
   })
 
   if (models.length > 0) {
-    await syncModelRoutes(channel.id, models, modelAliases, modelTypes)
+    await syncModelRoutes(channel.id, models, modelAliases, modelTypes, modelAdvanced)
   }
 
   const updated = await prisma.channel.findUnique({
@@ -109,7 +151,7 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
 // PUT /api/admin/channels/:id
 router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
   const id = parseInt(req.params.id, 10)
-  const { name, baseUrl, apiKey, provider, enabled, models, modelAliases, modelTypes } = req.body
+  const { name, baseUrl, apiKey, provider, enabled, models, modelAliases, modelTypes, modelAdvanced } = req.body
 
   const data: Record<string, unknown> = {}
   if (name !== undefined) data.name = name
@@ -123,13 +165,14 @@ router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
 
   await prisma.channel.update({ where: { id }, data })
 
-  if (models !== undefined || modelAliases !== undefined || modelTypes !== undefined) {
+  if (models !== undefined || modelAliases !== undefined || modelTypes !== undefined || modelAdvanced !== undefined) {
     const ch = await prisma.channel.findUnique({ where: { id } })
     if (ch) {
       const m: string[] = models !== undefined ? models : JSON.parse(ch.models || '[]')
       const a: Record<string, string> = modelAliases !== undefined ? modelAliases : JSON.parse(ch.modelAliases || '{}')
       const t: Record<string, string[]> = modelTypes !== undefined ? modelTypes : JSON.parse(ch.modelTypes || '{}')
-      await syncModelRoutes(id, m, a, t)
+      const adv: Record<string, ModelRouteAdvancedConfig> = modelAdvanced ?? {}
+      await syncModelRoutes(id, m, a, t, adv)
     }
   }
 

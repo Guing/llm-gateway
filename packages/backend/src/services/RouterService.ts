@@ -3,6 +3,14 @@ import { decrypt } from '../lib/crypto'
 import { logger } from '../lib/logger'
 import { getSettings } from '../lib/settings'
 
+export interface ModelRouteConfig {
+  timeout?: number
+  maxRetries?: number
+  customHeaders?: Record<string, string>
+  maxTokens?: number
+  contextLength?: number
+}
+
 export interface RouteCandidate {
   routeId: number
   channelId: number
@@ -14,6 +22,7 @@ export interface RouteCandidate {
   priority: number
   weight: number
   types: string[]
+  config: ModelRouteConfig
 }
 
 /**
@@ -39,6 +48,7 @@ export async function getRoutesForModel(
     priority: r.priority,
     weight: r.weight,
     types: (() => { try { return JSON.parse(r.types || '[]') as string[] } catch { return [] } })(),
+    config: (() => { try { return JSON.parse((r as unknown as { config?: string }).config || '{}') as ModelRouteConfig } catch { return {} } })(),
   }))
 }
 
@@ -104,40 +114,41 @@ export async function executeWithFallback<T>(
     const shuffled = weightedShuffle(tier)
 
     for (const route of shuffled) {
-      try {
-        const result = await fn(route)
-        return { result, route }
-      } catch (err) {
-        lastError = err as Error
-        const message = lastError.message || ''
-        // Only fallback on retriable errors
-        // If "fallback on any error" is enabled, every failure retries
-        if (getSettings().fallbackOnAnyError) {
-          logger.warn(`[Router] Channel "${route.channelName}" failed (${message}), trying next... [fallbackOnAnyError=true]`)
-          continue
+      const maxRetries = route.config.maxRetries ?? 0
+      let attempt = 0
+      while (attempt <= maxRetries) {
+        try {
+          const result = await fn(route)
+          return { result, route }
+        } catch (err) {
+          lastError = err as Error
+          const message = lastError.message || ''
+          attempt++
+
+          // Only fallback/retry on retriable errors
+          const isRetriable =
+            getSettings().fallbackOnAnyError ||
+            message.includes('429') ||
+            message.includes('rate limit') ||
+            message.includes('timeout') ||
+            message.includes('ECONNREFUSED') ||
+            message.includes('ECONNRESET') ||
+            message.includes('500') ||
+            message.includes('503') ||
+            message.includes('502') ||
+            message.includes('exceeded your current quota') ||
+            message.includes('quota') ||
+            message.includes('engine is not available') ||
+            message.includes('failed_precondition')
+
+          if (!isRetriable) throw lastError
+
+          if (attempt <= maxRetries) {
+            logger.warn(`[Router] Channel "${route.channelName}" failed (${message}), retrying (${attempt}/${maxRetries})...`)
+          } else {
+            logger.warn(`[Router] Channel "${route.channelName}" failed (${message}), trying next...`)
+          }
         }
-
-        const isRetriable =
-          message.includes('429') ||
-          message.includes('rate limit') ||
-          message.includes('timeout') ||
-          message.includes('ECONNREFUSED') ||
-          message.includes('ECONNRESET') ||
-          message.includes('500') ||
-          message.includes('503') ||
-          message.includes('502') ||
-          // Quota exhausted — try next channel if available
-          message.includes('exceeded your current quota') ||
-          message.includes('quota') ||
-          // Temporary engine unavailability
-          message.includes('engine is not available') ||
-          message.includes('failed_precondition')
-
-        if (!isRetriable) {
-          throw lastError
-        }
-
-        logger.warn(`[Router] Channel "${route.channelName}" failed (${message}), trying next...`)
       }
     }
   }

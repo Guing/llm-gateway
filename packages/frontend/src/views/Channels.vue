@@ -171,6 +171,18 @@
                   >{{ mt.label }}</el-checkbox-button>
                 </el-checkbox-group>
               </div>
+              <!-- Advanced settings button -->
+              <div class="pl-1">
+                <el-button
+                  size="small"
+                  type="primary"
+                  link
+                  :disabled="!form.models[idx]?.trim()"
+                  @click="openAdvanced(form.models[idx])"
+                >
+                  <el-icon class="mr-0.5"><Setting /></el-icon>高级设置
+                </el-button>
+              </div>
             </div>
             <el-button size="small" plain @click="addModel">
               <el-icon class="mr-1"><Plus /></el-icon>添加模型
@@ -184,6 +196,198 @@
         <el-button type="primary" :loading="saving" @click="handleSave">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- Advanced Settings Drawer -->
+    <el-drawer
+      v-model="advancedDrawerVisible"
+      :title="`高级设置 — ${advancedModelName}`"
+      direction="rtl"
+      size="800px"
+      :append-to-body="true"
+    >
+      <template v-if="advancedModelName && form.modelAdvanced[advancedModelName]">
+        <div class="space-y-4 pb-4">
+
+          <!-- 路由控制 -->
+          <div class="rounded-lg border border-gray-200 overflow-hidden">
+            <div class="bg-gray-50 px-4 py-2 border-b border-gray-200">
+              <span class="text-xs font-semibold text-gray-500 tracking-wide uppercase">路由控制</span>
+            </div>
+            <div class="px-4 py-3 space-y-4">
+              <div class="flex items-center justify-between">
+                <div>
+                  <div class="text-sm text-gray-700">启用路由</div>
+                  <div class="text-xs text-gray-400 mt-0.5">关闭后该模型将不参与调度</div>
+                </div>
+                <el-switch v-model="form.modelAdvanced[advancedModelName].enabled" />
+              </div>
+              <div>
+                <div class="flex items-center justify-between mb-1">
+                  <label class="text-sm text-gray-700">优先级</label>
+                  <span class="text-xs text-gray-400">数值越大越优先</span>
+                </div>
+                <el-input-number
+                  v-model="form.modelAdvanced[advancedModelName].priority"
+                  :min="1" :max="9999"
+                  controls-position="right"
+                  class="w-full"
+                  size="small"
+                />
+              </div>
+              <div>
+                <div class="flex items-center justify-between mb-1">
+                  <label class="text-sm text-gray-700">权重</label>
+                  <span class="text-xs text-gray-400">同优先级内随机比例（1-100）</span>
+                </div>
+                <el-input-number
+                  v-model="form.modelAdvanced[advancedModelName].weight"
+                  :min="1" :max="100"
+                  controls-position="right"
+                  class="w-full"
+                  size="small"
+                />
+              </div>
+            </div>
+          </div>
+
+          <!-- 请求参数 -->
+          <div class="rounded-lg border border-gray-200 overflow-hidden">
+            <div class="bg-gray-50 px-4 py-2 border-b border-gray-200">
+              <span class="text-xs font-semibold text-gray-500 tracking-wide uppercase">请求参数</span>
+            </div>
+            <div class="px-4 py-3 space-y-4">
+              <div>
+                <div class="flex items-center justify-between mb-1">
+                  <label class="text-sm text-gray-700">超时时间</label>
+                  <span class="text-xs text-gray-400">毫秒，留空使用全局默认值</span>
+                </div>
+                <el-input-number
+                  v-model="form.modelAdvanced[advancedModelName].timeout"
+                  :min="1000" :max="600000" :step="1000"
+                  controls-position="right"
+                  placeholder="默认 120000"
+                  class="w-full"
+                  size="small"
+                />
+              </div>
+              <div>
+                <div class="flex items-center justify-between mb-1">
+                  <label class="text-sm text-gray-700">最大重试次数</label>
+                  <span class="text-xs text-gray-400">0 = 不重试，上限 5 次</span>
+                </div>
+                <el-input-number
+                  v-model="form.modelAdvanced[advancedModelName].maxRetries"
+                  :min="0" :max="5"
+                  controls-position="right"
+                  placeholder="默认 0"
+                  class="w-full"
+                  size="small"
+                />
+              </div>
+
+              <!-- 自定义请求头 -->
+              <div>
+                <div class="flex items-center justify-between mb-2">
+                  <label class="text-sm text-gray-700">自定义请求头</label>
+                  <el-button size="small" plain @click="addCustomHeader">
+                    <el-icon class="mr-1"><Plus /></el-icon>添加
+                  </el-button>
+                </div>
+                <div
+                  v-if="form.modelAdvanced[advancedModelName].customHeaders.length === 0"
+                  class="text-xs text-gray-400 text-center py-3 border border-dashed border-gray-200 rounded-md"
+                >
+                  暂无自定义请求头
+                </div>
+                <div v-else class="space-y-2">
+                  <div
+                    v-for="(header, hIdx) in form.modelAdvanced[advancedModelName].customHeaders"
+                    :key="hIdx"
+                    class="flex items-center gap-1.5 bg-gray-50 rounded-md px-2 py-1.5 border border-gray-200"
+                  >
+                    <el-input
+                      v-model="header.key"
+                      placeholder="Header 名"
+                      class="flex-1 !text-xs"
+                      size="small"
+                    />
+                    <span class="text-gray-300 text-xs flex-shrink-0">:</span>
+                    <el-input
+                      v-model="header.value"
+                      placeholder="值"
+                      class="flex-1 !text-xs"
+                      size="small"
+                    />
+                    <el-button
+                      size="small"
+                      text
+                      type="danger"
+                      class="flex-shrink-0 !px-1"
+                      @click="removeCustomHeader(hIdx)"
+                    ><el-icon><Close /></el-icon></el-button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 模型参数 -->
+          <div class="rounded-lg border border-gray-200 overflow-hidden">
+            <div class="bg-gray-50 px-4 py-2 border-b border-gray-200">
+              <span class="text-xs font-semibold text-gray-500 tracking-wide uppercase">模型参数</span>
+            </div>
+            <div class="px-4 py-3 space-y-4">
+              <div>
+                <div class="flex items-center justify-between mb-2">
+                  <label class="text-sm text-gray-700">功能类型</label>
+                  <span class="text-xs text-gray-400">与外部分类同步</span>
+                </div>
+                <el-checkbox-group v-model="form.modelTypes[advancedModelName]" size="small">
+                  <el-checkbox-button
+                    v-for="mt in MODEL_TYPES"
+                    :key="mt.value"
+                    :value="mt.value"
+                    class="!text-xs mb-1"
+                  >{{ mt.label }}</el-checkbox-button>
+                </el-checkbox-group>
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <div class="text-sm text-gray-700 mb-1">最大上下文</div>
+                  <el-input-number
+                    v-model="form.modelAdvanced[advancedModelName].contextLength"
+                    :min="1" :max="10000000"
+                    :controls="false"
+                    placeholder="仅作记录"
+                    class="w-full"
+                    size="small"
+                  />
+                  <div class="text-xs text-gray-400 mt-1">Token 数，仅作记录</div>
+                </div>
+                <div>
+                  <div class="text-sm text-gray-700 mb-1">最大输出 Token</div>
+                  <el-input-number
+                    v-model="form.modelAdvanced[advancedModelName].maxTokens"
+                    :min="1" :max="1000000"
+                    :controls="false"
+                    placeholder="仅作记录"
+                    class="w-full"
+                    size="small"
+                  />
+                  <div class="text-xs text-gray-400 mt-1">Token 数，仅作记录</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </template>
+      <template #footer>
+        <div class="flex justify-end">
+          <el-button @click="advancedDrawerVisible = false">关闭</el-button>
+        </div>
+      </template>
+    </el-drawer>
   </div>
 </template>
 
@@ -202,6 +406,21 @@ const editingId = ref<number | null>(null)
 const formRef = ref<FormInstance>()
 const currentPage = ref(1)
 const pageSize = ref(20)
+
+// Advanced settings drawer state
+const advancedDrawerVisible = ref(false)
+const advancedModelName = ref('')
+
+interface ModelAdvancedConfig {
+  priority: number
+  weight: number
+  enabled: boolean
+  timeout?: number
+  maxRetries?: number
+  maxTokens?: number
+  contextLength?: number
+  customHeaders: { key: string; value: string }[]
+}
 
 // Model capability types
 const MODEL_TYPES = [
@@ -249,11 +468,12 @@ interface FormState {
   models: string[]
   aliases: Record<string, string>
   modelTypes: Record<string, string[]>
+  modelAdvanced: Record<string, ModelAdvancedConfig>
 }
 
 const form = reactive<FormState>({
   name: '', provider: 'openai', baseUrl: '', apiKey: '',
-  models: [], aliases: {}, modelTypes: {},
+  models: [], aliases: {}, modelTypes: {}, modelAdvanced: {},
 })
 
 const rules = {
@@ -356,6 +576,7 @@ function resetForm() {
   form.models = []
   form.aliases = {}
   form.modelTypes = {}
+  form.modelAdvanced = {}
   testStates.value = {}
 }
 
@@ -380,6 +601,26 @@ function openEdit(channel: Channel) {
     form.aliases = {}
     form.modelTypes = {}
   }
+  // Populate modelAdvanced from existing modelRoutes
+  form.modelAdvanced = {}
+  const routes = channel.modelRoutes ?? []
+  for (const m of form.models) {
+    const route = routes.find((r) => r.actualModel === m)
+    let parsedConfig: { timeout?: number; maxRetries?: number; customHeaders?: Record<string, string>; maxTokens?: number; contextLength?: number } = {}
+    if (route?.config) {
+      try { parsedConfig = JSON.parse(route.config) } catch { /* ignore */ }
+    }
+    form.modelAdvanced[m] = {
+      priority: route?.priority ?? 1,
+      weight: route?.weight ?? 100,
+      enabled: route?.enabled ?? true,
+      timeout: parsedConfig.timeout,
+      maxRetries: parsedConfig.maxRetries,
+      maxTokens: parsedConfig.maxTokens,
+      contextLength: parsedConfig.contextLength,
+      customHeaders: Object.entries(parsedConfig.customHeaders ?? {}).map(([key, value]) => ({ key, value })),
+    }
+  }
   dialogVisible.value = true
 }
 
@@ -396,6 +637,52 @@ function removeModel(idx: number) {
   if (removed && form.modelTypes[removed] !== undefined) {
     delete form.modelTypes[removed]
   }
+  if (removed && form.modelAdvanced[removed] !== undefined) {
+    delete form.modelAdvanced[removed]
+  }
+}
+
+function openAdvanced(model: string) {
+  if (!model?.trim()) return
+  if (!form.modelAdvanced[model]) {
+    form.modelAdvanced[model] = {
+      priority: 1,
+      weight: 100,
+      enabled: true,
+      customHeaders: [],
+    }
+  }
+  if (!form.modelTypes[model]) {
+    form.modelTypes[model] = []
+  }
+  advancedModelName.value = model
+  advancedDrawerVisible.value = true
+}
+
+function hasAdvancedSettings(model: string): boolean {
+  if (!model?.trim()) return false
+  const adv = form.modelAdvanced[model]
+  if (!adv) return false
+  return (
+    adv.priority !== 1 ||
+    adv.weight !== 100 ||
+    adv.enabled === false ||
+    adv.timeout !== undefined ||
+    adv.maxRetries !== undefined ||
+    adv.maxTokens !== undefined ||
+    adv.contextLength !== undefined ||
+    (adv.customHeaders && adv.customHeaders.length > 0)
+  )
+}
+
+function addCustomHeader() {
+  const adv = form.modelAdvanced[advancedModelName.value]
+  if (adv) adv.customHeaders.push({ key: '', value: '' })
+}
+
+function removeCustomHeader(idx: number) {
+  const adv = form.modelAdvanced[advancedModelName.value]
+  if (adv) adv.customHeaders.splice(idx, 1)
 }
 
 function cleanModel(idx: number) {
@@ -415,6 +702,7 @@ async function handleSave() {
       const cleanModels = form.models.map((m) => m.trim()).filter(Boolean)
       const cleanAliases: Record<string, string> = {}
       const cleanModelTypes: Record<string, string[]> = {}
+      const cleanModelAdvanced: Record<string, { priority?: number; weight?: number; enabled?: boolean; config?: Record<string, unknown> }> = {}
       for (const m of cleanModels) {
         if (form.aliases[m]?.trim()) {
           cleanAliases[m] = form.aliases[m].trim()
@@ -422,19 +710,40 @@ async function handleSave() {
         if (form.modelTypes[m]?.length) {
           cleanModelTypes[m] = form.modelTypes[m]
         }
+        const adv = form.modelAdvanced[m]
+        if (adv) {
+          const customHeaders: Record<string, string> = {}
+          for (const h of (adv.customHeaders ?? [])) {
+            if (h.key.trim()) customHeaders[h.key.trim()] = h.value
+          }
+          const config: Record<string, unknown> = {}
+          if (adv.timeout !== undefined) config.timeout = adv.timeout
+          if (adv.maxRetries !== undefined) config.maxRetries = adv.maxRetries
+          if (adv.maxTokens !== undefined) config.maxTokens = adv.maxTokens
+          if (adv.contextLength !== undefined) config.contextLength = adv.contextLength
+          if (Object.keys(customHeaders).length > 0) config.customHeaders = customHeaders
+          cleanModelAdvanced[m] = {
+            priority: adv.priority,
+            weight: adv.weight,
+            enabled: adv.enabled,
+            config,
+          }
+        }
       }
 
       if (editingId.value) {
         const data: Record<string, unknown> = {
           name: form.name, provider: form.provider, baseUrl: form.baseUrl,
           models: cleanModels, modelAliases: cleanAliases, modelTypes: cleanModelTypes,
+          modelAdvanced: cleanModelAdvanced,
         }
         if (form.apiKey) data.apiKey = form.apiKey
         await adminStore.updateChannel(editingId.value, data as Parameters<typeof adminStore.updateChannel>[1])
       } else {
         await adminStore.createChannel({
           name: form.name, baseUrl: form.baseUrl, apiKey: form.apiKey,
-          provider: form.provider, models: cleanModels, modelAliases: cleanAliases, modelTypes: cleanModelTypes,
+          provider: form.provider, models: cleanModels, modelAliases: cleanAliases,
+          modelTypes: cleanModelTypes, modelAdvanced: cleanModelAdvanced,
         })
       }
       dialogVisible.value = false

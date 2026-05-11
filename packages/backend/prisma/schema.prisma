@@ -65,6 +65,7 @@ model ModelRoute {
   weight       Int       @default(100) // 1-100, for weighted random within same priority
   enabled      Boolean   @default(true)
   types        String    @default("[]")   // JSON: string[] - model capability types
+  config       String    @default("{}")   // JSON: ModelRouteConfig - advanced settings (timeout, maxRetries, customHeaders, maxTokens, contextLength)
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 

@@ -117,6 +117,13 @@ export async function proxyRequest(
     'User-Agent': 'LLM-Gateway/1.0',
   }
 
+  // Merge custom headers from route config (before auth to avoid overriding auth)
+  if (route.config.customHeaders) {
+    for (const [k, v] of Object.entries(route.config.customHeaders)) {
+      headers[k] = v
+    }
+  }
+
   let endpoint: string
   if (upstreamFormat === 'anthropic') {
     headers['x-api-key'] = decryptedApiKey
@@ -149,8 +156,8 @@ export async function proxyRequest(
   const bodyStr = JSON.stringify(upstreamBody)
   logger.verbose(`[Proxy] request body (${bodyStr.length} bytes): ${bodyStr.length > 2000 ? bodyStr.slice(0, 2000) + '…[truncated]' : bodyStr}`)
 
-  // Configurable upstream timeout (PROXY_TIMEOUT_MS env, default 120 s)
-  const proxyTimeoutMs = parseInt(process.env.PROXY_TIMEOUT_MS || '120000', 10)
+  // Configurable upstream timeout: per-route config takes priority, then env var, default 120s
+  const proxyTimeoutMs = route.config.timeout ?? parseInt(process.env.PROXY_TIMEOUT_MS || '120000', 10)
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), proxyTimeoutMs)
 
