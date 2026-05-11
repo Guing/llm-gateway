@@ -342,14 +342,31 @@
                   <label class="text-sm text-gray-700">功能类型</label>
                   <span class="text-xs text-gray-400">与外部分类同步</span>
                 </div>
-                <el-checkbox-group v-model="form.modelTypes[advancedModelName]" size="small">
-                  <el-checkbox-button
-                    v-for="mt in MODEL_TYPES"
-                    :key="mt.value"
-                    :value="mt.value"
-                    class="!text-xs mb-1"
-                  >{{ mt.label }}</el-checkbox-button>
+                <el-checkbox-group v-model="form.modelTypes[advancedModelName]">
+                  <div class="flex flex-wrap gap-x-4 gap-y-2">
+                    <el-checkbox
+                      v-for="mt in MODEL_TYPES"
+                      :key="mt.value"
+                      :value="mt.value"
+                      class="!items-center"
+                    >
+                      <span class="text-sm text-gray-700">{{ mt.label }}</span>
+                      <el-tooltip :content="mt.degradeDesc" placement="top" :show-after="200">
+                        <el-icon class="ml-1 align-middle" style="font-size: 12px; color: #c0c4cc; cursor: help;"><InfoFilled /></el-icon>
+                      </el-tooltip>
+                    </el-checkbox>
+                  </div>
                 </el-checkbox-group>
+                <!-- Degradation summary -->
+                <div class="mt-3 text-xs text-gray-400 bg-gray-50 rounded-md px-3 py-2 border border-gray-100">
+                  <span class="font-medium text-gray-500">降级规则：</span>
+                  <template v-for="(mt, i) in MODEL_TYPES.filter(t => t.canDegradeTo.length > 0)" :key="mt.value">
+                    <span>{{ mt.label }} → {{ MODEL_TYPES.find(t => t.value === mt.canDegradeTo[0])?.label }}</span>
+                    <span v-if="i < MODEL_TYPES.filter(t => t.canDegradeTo.length > 0).length - 1" class="mx-1 text-gray-300">｜</span>
+                  </template>
+                  <span class="ml-2 text-gray-300">·</span>
+                  <span class="ml-2">嵌入 / 重排序 / 图像 / 语音 / 视频 需独立端点，不可降级</span>
+                </div>
               </div>
               <div class="grid grid-cols-2 gap-3">
                 <div>
@@ -422,17 +439,64 @@ interface ModelAdvancedConfig {
   customHeaders: { key: string; value: string }[]
 }
 
-// Model capability types
+// Model capability types — with degradation metadata
+// canDegradeTo: which base capability this falls back to when the route doesn't declare it
+// degradeDesc:  human-readable explanation shown as tooltip in the advanced settings drawer
 const MODEL_TYPES = [
-  { value: 'chat',             label: '对话' },       // chat completions
-  { value: 'vision',           label: '视觉理解' },   // image input in chat
-  { value: 'function-calling', label: '工具调用' },   // tools / function calling
-  { value: 'reasoning',        label: '深度推理' },   // extended thinking (o1/o3/Claude thinking)
-  { value: 'embedding',        label: '文本嵌入' },   // vector embeddings
-  { value: 'rerank',           label: '重排序' },     // reranking for RAG
-  { value: 'image-generation', label: '图像生成' },   // DALL-E / Stable Diffusion
-  { value: 'audio',            label: '语音处理' },   // TTS / STT
-  { value: 'video-generation', label: '视频生成' },   // Sora etc.
+  {
+    value: 'chat',
+    label: '对话',
+    canDegradeTo: [] as string[],
+    degradeDesc: '基础对话能力（/v1/chat/completions），所有可降级类型的最终降级目标，不可进一步降级',
+  },
+  {
+    value: 'vision',
+    label: '视觉理解',
+    canDegradeTo: ['chat'],
+    degradeDesc: '图像输入理解；路由不支持时自动去除消息中的图片内容并附注说明，降级为纯文本对话',
+  },
+  {
+    value: 'function-calling',
+    label: '工具调用',
+    canDegradeTo: ['chat'],
+    degradeDesc: '工具/函数调用（tools / functions）；路由不支持时自动去除相关参数，降级为纯文本对话',
+  },
+  {
+    value: 'reasoning',
+    label: '深度推理',
+    canDegradeTo: ['chat'],
+    degradeDesc: '扩展推理模式（o1/o3/Claude Thinking）；路由不支持时自动去除 reasoning_effort / thinking 参数，降级为普通对话',
+  },
+  {
+    value: 'embedding',
+    label: '文本嵌入',
+    canDegradeTo: [] as string[],
+    degradeDesc: '文本向量嵌入（/v1/embeddings），需独立端点，不可降级为对话',
+  },
+  {
+    value: 'rerank',
+    label: '重排序',
+    canDegradeTo: [] as string[],
+    degradeDesc: '重排序（RAG 场景，如 Cohere Rerank / BGE-Reranker），需独立端点，不可降级',
+  },
+  {
+    value: 'image-generation',
+    label: '图像生成',
+    canDegradeTo: [] as string[],
+    degradeDesc: '文生图（/v1/images/generations），需独立端点，不可降级为对话',
+  },
+  {
+    value: 'audio',
+    label: '语音处理',
+    canDegradeTo: [] as string[],
+    degradeDesc: '语音合成（TTS）/ 语音识别（STT），需独立的 /audio 端点，不可降级',
+  },
+  {
+    value: 'video-generation',
+    label: '视频生成',
+    canDegradeTo: [] as string[],
+    degradeDesc: '文生视频（如 Sora / Kling），需独立端点，不可降级',
+  },
 ]
 
 const MODEL_TYPE_COLORS: Record<string, string> = {

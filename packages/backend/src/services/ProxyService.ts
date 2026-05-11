@@ -1,6 +1,7 @@
 import fetch, { Response } from 'node-fetch'
 import { RouteCandidate } from './RouterService'
 import { logger } from '../lib/logger'
+import { CAPABILITY_DEGRADATION_MATRIX } from '../lib/capabilities'
 
 export interface OpenAIMessage {
   role: 'system' | 'user' | 'assistant'
@@ -82,9 +83,12 @@ type RequestFormat = 'openai' | 'anthropic'
 /**
  * Strip parameters that are not supported by the target route's declared capability types.
  *
- * This is called after format conversion so `format` reflects the upstream wire format.
- * Prevents errors when falling back from a capable route (e.g. reasoning) to one that
- * doesn't declare that capability.
+ * Driven by CAPABILITY_DEGRADATION_MATRIX: for every capability the route does NOT declare,
+ * the corresponding request params are removed before forwarding. This prevents errors when
+ * falling back from a capable route (e.g. reasoning) to one that doesn't declare that capability.
+ *
+ * Vision image-content filtering is a special case handled separately below (it requires
+ * recursive message traversal rather than a simple top-level param deletion).
  */
 function sanitizeRequestForRoute(
   body: Record<string, unknown>,
@@ -93,30 +97,18 @@ function sanitizeRequestForRoute(
 ): Record<string, unknown> {
   const b = { ...body }
 
-  // ── Reasoning ──────────────────────────────────────────────────────────────
-  // Strip reasoning-specific params when route doesn't declare 'reasoning'.
-  if (!types.includes('reasoning')) {
-    // OpenAI-compatible: reasoning_effort (o3/o4-mini), thinking (some providers)
-    if (format === 'openai') {
-      delete b.reasoning_effort
-      delete b.thinking
-    }
-    // Anthropic: thinking block
-    if (format === 'anthropic') {
-      delete b.thinking
+  // ── Matrix-driven flat param stripping ─────────────────────────────────────
+  for (const [capability, rule] of Object.entries(CAPABILITY_DEGRADATION_MATRIX)) {
+    if (types.includes(capability)) continue          // route declares this capability — keep params
+    if (rule.canDegradeTo.length === 0) continue      // non-chat endpoint, stripping irrelevant
+
+    const paramsToStrip = format === 'openai' ? rule.stripOpenAI : rule.stripAnthropic
+    for (const param of paramsToStrip) {
+      delete b[param]
     }
   }
 
-  // ── Function calling ───────────────────────────────────────────────────────
-  // Strip tool/function params when route doesn't declare 'function-calling'.
-  if (!types.includes('function-calling')) {
-    delete b.tools
-    delete b.functions
-    delete b.tool_choice
-    delete b.parallel_tool_calls
-  }
-
-  // ── Vision ─────────────────────────────────────────────────────────────────
+  // ── Vision: message-content filtering (special case) ───────────────────────
   // When route doesn't declare 'vision', strip image content from messages.
   // Image parts are replaced with a text placeholder so the request still makes
   // sense to the downstream model instead of failing with an unsupported-type error.

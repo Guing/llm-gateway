@@ -2,6 +2,7 @@ import { prisma } from '../lib/prisma'
 import { decrypt } from '../lib/crypto'
 import { logger } from '../lib/logger'
 import { getSettings } from '../lib/settings'
+import { isCapabilityRejectionError } from '../lib/capabilities'
 
 export interface ModelRouteConfig {
   timeout?: number
@@ -140,19 +141,18 @@ export async function executeWithFallback<T>(
             message.includes('quota') ||
             message.includes('engine is not available') ||
             message.includes('failed_precondition') ||
-            // Context length exceeded — fall back to a route with larger context window
+            // Context length exceeded — fall back to a route with a larger context window
             message.includes('context_length_exceeded') ||
             message.includes('context length') ||
             message.includes('maximum context') ||
-            message.includes('max_tokens') && message.includes('exceed') ||
+            (message.includes('max_tokens') && message.includes('exceed')) ||
             message.includes('tokens exceed') ||
-            message.includes('too long') && (message.includes('token') || message.includes('context')) ||
+            (message.includes('too long') && (message.includes('token') || message.includes('context'))) ||
             message.includes('input is too long') ||
             message.includes('prompt is too long') ||
-            // Vision not supported — fall back to a vision-capable route
-            message.includes('image') && (message.includes('not support') || message.includes('unsupported')) ||
-            message.includes('vision') && message.includes('not support') ||
-            message.includes('multimodal') && message.includes('not support')
+            // Capability rejected at runtime — fall back to a route that supports it
+            // (vision / function-calling / reasoning — driven by CAPABILITY_DEGRADATION_MATRIX)
+            isCapabilityRejectionError(message)
 
           if (!isRetriable) throw lastError
 
