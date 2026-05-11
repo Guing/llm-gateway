@@ -80,6 +80,97 @@ function anthropicToOpenAI(req: AnthropicRequest): OpenAIRequest {
 type RequestFormat = 'openai' | 'anthropic'
 
 /**
+ * Strip parameters that are not supported by the target route's declared capability types.
+ *
+ * This is called after format conversion so `format` reflects the upstream wire format.
+ * Prevents errors when falling back from a capable route (e.g. reasoning) to one that
+ * doesn't declare that capability.
+ */
+function sanitizeRequestForRoute(
+  body: Record<string, unknown>,
+  types: string[],
+  format: RequestFormat
+): Record<string, unknown> {
+  const b = { ...body }
+
+  // ── Reasoning ──────────────────────────────────────────────────────────────
+  // Strip reasoning-specific params when route doesn't declare 'reasoning'.
+  if (!types.includes('reasoning')) {
+    // OpenAI-compatible: reasoning_effort (o3/o4-mini), thinking (some providers)
+    if (format === 'openai') {
+      delete b.reasoning_effort
+      delete b.thinking
+    }
+    // Anthropic: thinking block
+    if (format === 'anthropic') {
+      delete b.thinking
+    }
+  }
+
+  // ── Function calling ───────────────────────────────────────────────────────
+  // Strip tool/function params when route doesn't declare 'function-calling'.
+  if (!types.includes('function-calling')) {
+    delete b.tools
+    delete b.functions
+    delete b.tool_choice
+    delete b.parallel_tool_calls
+  }
+
+  // ── Vision ─────────────────────────────────────────────────────────────────
+  // When route doesn't declare 'vision', strip image content from messages.
+  // Image parts are replaced with a text placeholder so the request still makes
+  // sense to the downstream model instead of failing with an unsupported-type error.
+  if (!types.includes('vision')) {
+    if (format === 'openai' && Array.isArray(b.messages)) {
+      b.messages = (b.messages as Array<Record<string, unknown>>).map((msg) => {
+        if (!Array.isArray(msg.content)) return msg
+        // Filter out image_url parts; keep text parts only
+        const textParts = (msg.content as Array<Record<string, unknown>>).filter(
+          (part) => part.type !== 'image_url'
+        )
+        // If images were removed, append a note so the model knows
+        const removedCount =
+          (msg.content as Array<Record<string, unknown>>).length - textParts.length
+        if (removedCount > 0) {
+          textParts.push({
+            type: 'text',
+            text: `[${removedCount} image(s) were omitted because this model does not support vision]`,
+          })
+        }
+        // Flatten back to a plain string when only one text part remains
+        if (textParts.length === 1 && textParts[0].type === 'text') {
+          return { ...msg, content: textParts[0].text }
+        }
+        return { ...msg, content: textParts }
+      })
+    }
+
+    if (format === 'anthropic' && Array.isArray(b.messages)) {
+      b.messages = (b.messages as Array<Record<string, unknown>>).map((msg) => {
+        if (!Array.isArray(msg.content)) return msg
+        const textParts = (msg.content as Array<Record<string, unknown>>).filter(
+          (part) => part.type !== 'image'
+        )
+        const removedCount =
+          (msg.content as Array<Record<string, unknown>>).length - textParts.length
+        if (removedCount > 0) {
+          textParts.push({
+            type: 'text',
+            text: `[${removedCount} image(s) were omitted because this model does not support vision]`,
+          })
+        }
+        if (textParts.length === 1 && textParts[0].type === 'text') {
+          return { ...msg, content: textParts[0].text }
+        }
+        return { ...msg, content: textParts }
+      })
+    }
+  }
+
+  return b
+}
+
+/**
  * Forward a request to an upstream channel, handling format conversion.
  *
  * @param route     Selected upstream channel + model
@@ -110,6 +201,14 @@ export async function proxyRequest(
     // Same format — clone and replace model
     upstreamBody = { ...body, model: actualModel }
   }
+
+  // Strip params not supported by this route's declared capability types.
+  // This handles fallback from a capable route (e.g. reasoning) to a limited one.
+  upstreamBody = sanitizeRequestForRoute(
+    upstreamBody as Record<string, unknown>,
+    route.types,
+    upstreamFormat
+  ) as typeof upstreamBody
 
   // Build headers
   const headers: Record<string, string> = {

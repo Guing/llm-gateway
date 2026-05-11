@@ -88,7 +88,7 @@
     <el-dialog
       v-model="dialogVisible"
       :title="editingId ? '编辑渠道' : '添加渠道'"
-      width="640px"
+      width="800px"
       :close-on-click-modal="false"
     >
       <el-form ref="formRef" :model="form" :rules="rules" label-width="100px" @submit.prevent>
@@ -424,24 +424,26 @@ interface ModelAdvancedConfig {
 
 // Model capability types
 const MODEL_TYPES = [
-  { value: 'chat', label: '文本' },
-  { value: 'vision', label: '视觉' },
-  { value: 'function-calling', label: '工具调用' },
-  { value: 'reasoning', label: '推理' },
-  { value: 'embedding', label: '嵌入' },
-  { value: 'image-generation', label: '图像生成' },
-  { value: 'audio', label: '语音' },
-  { value: 'video-generation', label: '视频生成' },
+  { value: 'chat',             label: '对话' },       // chat completions
+  { value: 'vision',           label: '视觉理解' },   // image input in chat
+  { value: 'function-calling', label: '工具调用' },   // tools / function calling
+  { value: 'reasoning',        label: '深度推理' },   // extended thinking (o1/o3/Claude thinking)
+  { value: 'embedding',        label: '文本嵌入' },   // vector embeddings
+  { value: 'rerank',           label: '重排序' },     // reranking for RAG
+  { value: 'image-generation', label: '图像生成' },   // DALL-E / Stable Diffusion
+  { value: 'audio',            label: '语音处理' },   // TTS / STT
+  { value: 'video-generation', label: '视频生成' },   // Sora etc.
 ]
 
 const MODEL_TYPE_COLORS: Record<string, string> = {
-  'chat': '#409eff',
-  'vision': '#67c23a',
+  'chat':             '#409eff',
+  'vision':           '#67c23a',
   'function-calling': '#e6a23c',
-  'reasoning': '#9b59b6',
-  'embedding': '#1abc9c',
+  'reasoning':        '#9b59b6',
+  'embedding':        '#1abc9c',
+  'rerank':           '#00bcd4',
   'image-generation': '#e91e63',
-  'audio': '#ff5722',
+  'audio':            '#ff5722',
   'video-generation': '#795548',
 }
 
@@ -659,21 +661,6 @@ function openAdvanced(model: string) {
   advancedDrawerVisible.value = true
 }
 
-function hasAdvancedSettings(model: string): boolean {
-  if (!model?.trim()) return false
-  const adv = form.modelAdvanced[model]
-  if (!adv) return false
-  return (
-    adv.priority !== 1 ||
-    adv.weight !== 100 ||
-    adv.enabled === false ||
-    adv.timeout !== undefined ||
-    adv.maxRetries !== undefined ||
-    adv.maxTokens !== undefined ||
-    adv.contextLength !== undefined ||
-    (adv.customHeaders && adv.customHeaders.length > 0)
-  )
-}
 
 function addCustomHeader() {
   const adv = form.modelAdvanced[advancedModelName.value]
