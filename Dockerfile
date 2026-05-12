@@ -26,28 +26,11 @@ RUN pnpm install --frozen-lockfile --filter backend --ignore-scripts
 
 COPY packages/backend ./packages/backend
 
-# Generate Prisma client for linux-musl (Alpine)
-RUN pnpm --filter backend exec prisma generate
-
-# Compile TypeScript �?JavaScript
+# Compile TypeScript to JavaScript
 RUN pnpm --filter backend build
 
 # Create a portable production deployment bundle (flat node_modules, prod deps only)
 RUN pnpm deploy --filter backend --prod --legacy /deploy/backend
-
-# Copy Prisma generated client (query engine binary) into the deploy bundle.
-# pnpm deploy creates a flat node_modules but does NOT copy .prisma/ — it is a
-# generated artifact written by `prisma generate` into the pnpm virtual store.
-# We search the entire /app tree (excluding /deploy) to find it regardless of
-# the exact pnpm store depth, then copy it to the expected runtime location.
-RUN PRISMA_SRC=$(find /app -path "*/node_modules/.prisma" -type d 2>/dev/null \
-      | grep -v '/deploy/' | head -1) && \
-    if [ -z "$PRISMA_SRC" ]; then \
-      echo "ERROR: .prisma not found anywhere under /app — prisma generate may have failed"; \
-      exit 1; \
-    fi && \
-    echo "Copying .prisma from: $PRISMA_SRC" && \
-    cp -r "$PRISMA_SRC" /deploy/backend/node_modules/.prisma
 # ── Stage 3: Production image ─────────────────────────────────────────────────
 FROM node:22-alpine
 WORKDIR /app
@@ -55,7 +38,7 @@ WORKDIR /app
 # Prisma schema engine requires openssl on Alpine
 RUN apk add --no-cache openssl
 
-# Copy flat production node_modules from pnpm deploy (includes .prisma)
+# Copy flat production node_modules from pnpm deploy
 COPY --from=backend-build /deploy/backend/node_modules ./packages/backend/node_modules
 
 # Copy compiled backend JS
@@ -76,9 +59,10 @@ ENV NODE_ENV=production \
     PORT=7500 \
     DATABASE_URL=file:/data/prod.db
 
-# Apply DB migrations then start the server
+# Generate Prisma client at startup (native arch), then migrate and start.
 CMD ["sh", "-c", \
   "cd /app/packages/backend && \
+  node_modules/.bin/prisma generate && \
    node_modules/.bin/prisma migrate deploy && \
    cd /app && \
    node packages/backend/dist/index.js"]
