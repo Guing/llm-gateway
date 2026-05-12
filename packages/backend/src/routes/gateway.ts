@@ -301,6 +301,9 @@ async function handleStreaming(
     const upstreamFormat = route.provider === 'anthropic' ? 'anthropic' : 'openai'
     const interceptor = new StreamInterceptor()
 
+    // Create transform with format conversion support
+    const transform = interceptor.createTransform(upstreamFormat, incomingFormat)
+
     // When streaming completes, save the full log
     interceptor.once('done', async (data: { fullContent: string; promptTokens?: number; completionTokens?: number }) => {
       const completedAt = new Date()
@@ -363,9 +366,6 @@ async function handleStreaming(
         ` | in=${data.promptTokens ?? '?'} out=${data.completionTokens ?? '?'}`
       )
     })
-
-    // Pipe: upstream body → SSE interceptor (passthrough) → client
-    const transform = interceptor.createTransform(upstreamFormat)
 
     // Track whether the stream completed successfully via the 'done' event.
     // This prevents double-logging when pipeline() callback fires after done.
