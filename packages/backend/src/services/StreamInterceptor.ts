@@ -15,6 +15,11 @@ export class StreamInterceptor extends EventEmitter {
   private lineBuffer: string = ''
   private currentEventType: string = 'message'
   private currentDataLines: string[] = []
+  private responsesStreamStarted: boolean = false
+  private responseId: string = `resp_${Date.now()}`
+  private responseOutputItemId: string = `msg_${Date.now()}`
+  private responseModel: string = ''
+  private responseCreatedAt: number = Math.floor(Date.now() / 1000)
 
   /** Accumulated full assistant response content */
   public fullContent: string = ''
@@ -23,8 +28,15 @@ export class StreamInterceptor extends EventEmitter {
 
   createTransform(
     upstreamFormat: 'openai' | 'anthropic' | 'custom',
-    targetFormat?: 'openai' | 'anthropic'
+    targetFormat?: 'openai' | 'anthropic' | 'openai-responses',
+    options?: { responseModel?: string }
   ): Transform {
+    this.responsesStreamStarted = false
+    this.responseId = `resp_${Date.now()}`
+    this.responseOutputItemId = `msg_${Date.now()}`
+    this.responseModel = options?.responseModel ?? ''
+    this.responseCreatedAt = Math.floor(Date.now() / 1000)
+
     return new Transform({
       transform: (chunk: Buffer, _encoding, callback) => {
         const text = chunk.toString('utf-8')
@@ -51,6 +63,8 @@ export class StreamInterceptor extends EventEmitter {
       },
 
       flush: (callback) => {
+        let flushOutput = ''
+
         // Handle any remaining data in buffer
         if (this.lineBuffer) {
           const transformed = this.processAndTransformLine(
@@ -59,22 +73,31 @@ export class StreamInterceptor extends EventEmitter {
             targetFormat
           )
           if (transformed) {
-            callback(null, Buffer.from(transformed + '\n'))
-          } else {
-            callback()
+            flushOutput += transformed + '\n'
           }
           this.lineBuffer = ''
-        } else {
-          callback()
         }
 
         // Flush any pending event
-        this.flushCurrentEventAndReturn(upstreamFormat, targetFormat)
+        const finalFlush = this.flushCurrentEventAndReturn(upstreamFormat, targetFormat)
+        if (finalFlush) flushOutput += finalFlush + '\n'
+
+        if (targetFormat === 'openai-responses') {
+          const completion = this.buildResponsesCompletionEvents()
+          if (completion) flushOutput += completion + '\n'
+        }
+
         this.emit('done', {
           fullContent: this.fullContent,
           promptTokens: this.promptTokens,
           completionTokens: this.completionTokens,
         })
+
+        if (flushOutput) {
+          callback(null, Buffer.from(flushOutput))
+        } else {
+          callback()
+        }
       },
     })
   }
@@ -86,7 +109,7 @@ export class StreamInterceptor extends EventEmitter {
   private processAndTransformLine(
     line: string,
     upstreamFormat: 'openai' | 'anthropic' | 'custom',
-    targetFormat?: 'openai' | 'anthropic'
+    targetFormat?: 'openai' | 'anthropic' | 'openai-responses'
   ): string {
     if (line === '') {
       // Empty line = SSE message boundary; flush accumulated message
@@ -95,6 +118,7 @@ export class StreamInterceptor extends EventEmitter {
 
     if (line.startsWith('event: ')) {
       this.currentEventType = line.slice(7).trim()
+      if (targetFormat === 'openai-responses') return ''
       return line  // Pass through event line as-is
     } else if (line.startsWith('data: ')) {
       this.currentDataLines.push(line.slice(6))
@@ -109,7 +133,7 @@ export class StreamInterceptor extends EventEmitter {
    */
   private flushCurrentEventAndReturn(
     upstreamFormat: 'openai' | 'anthropic' | 'custom',
-    targetFormat?: 'openai' | 'anthropic'
+    targetFormat?: 'openai' | 'anthropic' | 'openai-responses'
   ): string {
     if (this.currentDataLines.length === 0) return ''
 
@@ -119,12 +143,16 @@ export class StreamInterceptor extends EventEmitter {
     this.currentEventType = 'message'
 
     if (rawData === '[DONE]') {
-      return 'data: [DONE]'
+      return targetFormat === 'openai-responses' ? '' : 'data: [DONE]'
     }
 
     try {
       const parsed = JSON.parse(rawData)
       this.extractContent(parsed, upstreamFormat)
+
+      if (targetFormat === 'openai-responses') {
+        return this.convertToResponsesEvents(parsed, upstreamFormat)
+      }
 
       // Convert format if needed
       const shouldConvert = targetFormat && targetFormat !== upstreamFormat &&
@@ -158,7 +186,7 @@ export class StreamInterceptor extends EventEmitter {
   private convertStreamChunk(
     data: Record<string, unknown>,
     fromFormat: 'openai' | 'anthropic' | 'custom',
-    toFormat: 'openai' | 'anthropic'
+    toFormat: 'openai' | 'anthropic' | 'openai-responses'
   ): Record<string, unknown> {
     // No conversion needed if formats match
     if (
@@ -237,6 +265,119 @@ export class StreamInterceptor extends EventEmitter {
     }
 
     return data
+  }
+
+  private sse(event: string, data: Record<string, unknown>): string {
+    return `event: ${event}\ndata: ${JSON.stringify(data)}\n`
+  }
+
+  private ensureResponseMetaFromOpenAIChunk(data: Record<string, unknown>): void {
+    const chunkId = typeof data.id === 'string' ? data.id : ''
+    const created = typeof data.created === 'number' ? data.created : undefined
+    const model = typeof data.model === 'string' ? data.model : undefined
+    if (chunkId && this.responseId.startsWith('resp_')) this.responseId = chunkId
+    if (created != null) this.responseCreatedAt = created
+    if (model) this.responseModel = model
+  }
+
+  private buildResponseBase(status: 'in_progress' | 'completed'): Record<string, unknown> {
+    const outputText = this.fullContent
+    return {
+      id: this.responseId,
+      object: 'response',
+      created_at: this.responseCreatedAt,
+      status,
+      model: this.responseModel,
+      output: [
+        {
+          id: this.responseOutputItemId,
+          type: 'message',
+          role: 'assistant',
+          content: [
+            {
+              type: 'output_text',
+              text: outputText,
+              annotations: [],
+            },
+          ],
+        },
+      ],
+      output_text: outputText,
+      usage: {
+        input_tokens: this.promptTokens ?? 0,
+        output_tokens: this.completionTokens ?? 0,
+        total_tokens: (this.promptTokens ?? 0) + (this.completionTokens ?? 0),
+      },
+    }
+  }
+
+  private buildResponsesCompletionEvents(): string {
+    if (!this.responsesStreamStarted) {
+      return ''
+    }
+
+    const parts: string[] = []
+    parts.push(
+      this.sse('response.output_text.done', {
+        type: 'response.output_text.done',
+        response_id: this.responseId,
+        output_index: 0,
+        item_id: this.responseOutputItemId,
+        content_index: 0,
+        text: this.fullContent,
+      })
+    )
+    parts.push(
+      this.sse('response.completed', {
+        type: 'response.completed',
+        response: this.buildResponseBase('completed'),
+      })
+    )
+    parts.push('data: [DONE]\n')
+    return parts.join('\n')
+  }
+
+  private convertToResponsesEvents(
+    data: Record<string, unknown>,
+    upstreamFormat: 'openai' | 'anthropic' | 'custom'
+  ): string {
+    const openAIChunk = upstreamFormat === 'anthropic'
+      ? this.convertStreamChunk(data, 'anthropic', 'openai')
+      : data
+
+    if (Object.keys(openAIChunk).length === 0) return ''
+
+    this.ensureResponseMetaFromOpenAIChunk(openAIChunk)
+
+    const parts: string[] = []
+    if (!this.responsesStreamStarted) {
+      this.responsesStreamStarted = true
+      parts.push(
+        this.sse('response.created', {
+          type: 'response.created',
+          response: this.buildResponseBase('in_progress'),
+        })
+      )
+    }
+
+    const choices = openAIChunk.choices as Array<{
+      delta?: { content?: string }
+    }> | undefined
+    const deltaText = choices?.[0]?.delta?.content
+    if (typeof deltaText === 'string' && deltaText.length > 0) {
+      parts.push(
+        this.sse('response.output_text.delta', {
+          type: 'response.output_text.delta',
+          response_id: this.responseId,
+          output_index: 0,
+          item_id: this.responseOutputItemId,
+          content_index: 0,
+          delta: deltaText,
+        })
+      )
+    }
+
+    return parts.join('\n')
   }
 
   private extractContent(
