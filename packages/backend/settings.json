@@ -1,0 +1,6 @@
+{
+  "fallbackOnAnyError": false,
+  "fallbackPenaltyBaseMs": 60000,
+  "fallbackPenaltyMaxMs": 300000,
+  "fallbackPenaltyWeightRatio": 0.2
+}

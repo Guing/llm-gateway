@@ -1,11 +1,12 @@
 import { Router, Response, IRouter } from 'express'
-import { pipeline } from 'stream'
+import { pipeline, PassThrough } from 'stream'
 import { prisma } from '../lib/prisma'
 import { logger } from '../lib/logger'
 import { AuthRequest, apiKeyAuth } from '../middleware/authMiddleware'
 import {
   getRoutesForModel,
   executeWithFallback,
+  recordRouteFailure,
   RouteCandidate,
 } from '../services/RouterService'
 import {
@@ -17,6 +18,59 @@ import { StreamInterceptor } from '../services/StreamInterceptor'
 
 const router: IRouter = Router()
 router.use(apiKeyAuth)
+
+// ---------------------------------------------------------------------------
+// Stream-start probe: wait for the first data chunk BEFORE committing to a route.
+// Handles "200 OK + immediate close" — upstream says OK but never sends any SSE data.
+// Resolves with a PassThrough that replays all buffered + future chunks.
+// Throws if the connection closes or no data arrives within timeoutMs.
+// ---------------------------------------------------------------------------
+const STREAM_PROBE_TIMEOUT_MS = 15_000
+
+function probeStream(
+  source: NodeJS.ReadableStream,
+  timeoutMs: number
+): Promise<NodeJS.ReadableStream> {
+  const pass = new PassThrough()
+
+  // Forward source errors into the PassThrough (stream.pipe does NOT propagate errors).
+  ;(source as import('stream').Readable).on('error', (err) => {
+    if (!pass.destroyed) pass.destroy(err)
+  })
+  ;(source as import('stream').Readable).pipe(pass)
+
+  return new Promise((resolve, reject) => {
+    let settled = false
+
+    const settle = (fn: () => void) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      pass.removeListener('readable', onReadable)
+      pass.removeListener('error',    onError)
+      pass.removeListener('end',      onEnd)
+      fn()
+    }
+
+    const onReadable = () => settle(() => resolve(pass))
+    const onError    = (e: Error) => settle(() => reject(e))
+    // upstream closed before sending any SSE data
+    const onEnd = () => settle(() => reject(new Error('Premature close')))
+
+    const timer = setTimeout(() => {
+      settle(() => {
+        ;(source as import('stream').Readable).unpipe(pass)
+        ;(source as import('stream').Readable).destroy(new Error('stream probe timeout'))
+        pass.destroy()
+        reject(new Error(`stream start timeout (${timeoutMs}ms) — upstream returned 200 but sent no data`))
+      })
+    }, timeoutMs)
+
+    pass.on('readable', onReadable)
+    pass.on('error',    onError)
+    pass.on('end',      onEnd)
+  })
+}
 
 // ---------------------------------------------------------------------------
 // POST /v1/chat/completions  (OpenAI-compatible)
@@ -228,15 +282,21 @@ async function handleStreaming(
   let selectedRoute: RouteCandidate | undefined
 
   try {
-    const { result: upstreamResponse, route } = await executeWithFallback(
+    const { result: { upstreamResponse, probedBody }, route } = await executeWithFallback(
       routes,
-      (r) => proxyRequest(r, body as never, incomingFormat)
+      async (r) => {
+        const resp = await proxyRequest(r, body as never, incomingFormat)
+        if (!resp.body) throw new Error('Upstream returned empty body')
+        // Probe: verify the stream actually starts delivering data before committing.
+        // If the upstream returns 200 OK but immediately drops the connection, probeStream()
+        // throws and executeWithFallback will fall back to the next route transparently.
+        // Note: a premature close that happens AFTER data has already been sent to the client
+        // (mid-stream) cannot be retried — the client has already received partial output.
+        const probed = await probeStream(resp.body as NodeJS.ReadableStream, STREAM_PROBE_TIMEOUT_MS)
+        return { upstreamResponse: resp, probedBody: probed }
+      }
     )
     selectedRoute = route
-
-    if (!upstreamResponse.body) {
-      throw new Error('Upstream returned empty body')
-    }
 
     const upstreamFormat = route.provider === 'anthropic' ? 'anthropic' : 'openai'
     const interceptor = new StreamInterceptor()
@@ -323,7 +383,7 @@ async function handleStreaming(
     // pipeline() propagates errors through all streams and guarantees cleanup,
     // unlike .pipe() which silently stalls when the destination is destroyed.
     pipeline(
-      upstreamResponse.body,
+      probedBody,
       transform,
       res,
       async (pipelineErr) => {
@@ -344,6 +404,9 @@ async function handleStreaming(
         if (isClientDisconnect) {
           logger.info(`[Gateway] ⚡ ${virtualModel} [stream] client disconnected | ${duration}ms`)
         } else {
+          if (selectedRoute) {
+            recordRouteFailure(selectedRoute, errMsg)
+          }
           logger.error(`[Gateway] ✗ ${virtualModel} [stream pipe error] | ${duration}ms | ${errMsg}`)
         }
 

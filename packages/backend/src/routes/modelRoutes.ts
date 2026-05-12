@@ -1,6 +1,7 @@
 import { Router, Response, IRouter } from 'express'
 import { prisma } from '../lib/prisma'
 import { AuthRequest, jwtAuth, requireAdmin } from '../middleware/authMiddleware'
+import { getRouteHealthSnapshot } from '../services/RouterService'
 
 const router: IRouter = Router()
 router.use(jwtAuth, requireAdmin)
@@ -16,6 +17,12 @@ router.get('/', async (_req: AuthRequest, res: Response): Promise<void> => {
     },
   })
   res.json(routes)
+})
+
+// GET /api/admin/routes/health
+router.get('/health', async (_req: AuthRequest, res: Response): Promise<void> => {
+  const health = getRouteHealthSnapshot()
+  res.json(health)
 })
 
 // POST /api/admin/routes

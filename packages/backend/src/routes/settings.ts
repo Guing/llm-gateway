@@ -23,9 +23,51 @@ router.get('/', (req: Request, res: Response) => {
 // PUT /api/admin/settings
 router.put('/', (req: Request, res: Response) => {
   if (!requireAdmin(req as AuthRequest, res)) return
-  const { fallbackOnAnyError } = req.body as Record<string, unknown>
+  const current = getSettings()
+  const {
+    fallbackOnAnyError,
+    fallbackPenaltyBaseMs,
+    fallbackPenaltyMaxMs,
+    fallbackPenaltyWeightRatio,
+  } = req.body as Record<string, unknown>
+
   const patch: Record<string, unknown> = {}
   if (typeof fallbackOnAnyError === 'boolean') patch.fallbackOnAnyError = fallbackOnAnyError
+
+  if (fallbackPenaltyBaseMs !== undefined) {
+    const n = Number(fallbackPenaltyBaseMs)
+    if (!Number.isFinite(n) || n < 1000 || n > 3_600_000) {
+      res.status(400).json({ error: 'fallbackPenaltyBaseMs must be between 1000 and 3600000' })
+      return
+    }
+    patch.fallbackPenaltyBaseMs = Math.round(n)
+  }
+
+  if (fallbackPenaltyMaxMs !== undefined) {
+    const n = Number(fallbackPenaltyMaxMs)
+    if (!Number.isFinite(n) || n < 1000 || n > 7_200_000) {
+      res.status(400).json({ error: 'fallbackPenaltyMaxMs must be between 1000 and 7200000' })
+      return
+    }
+    patch.fallbackPenaltyMaxMs = Math.round(n)
+  }
+
+  const mergedBase = Number(patch.fallbackPenaltyBaseMs ?? current.fallbackPenaltyBaseMs)
+  const mergedMax = Number(patch.fallbackPenaltyMaxMs ?? current.fallbackPenaltyMaxMs)
+  if (mergedBase > mergedMax) {
+    res.status(400).json({ error: 'fallbackPenaltyBaseMs cannot be greater than fallbackPenaltyMaxMs' })
+    return
+  }
+
+  if (fallbackPenaltyWeightRatio !== undefined) {
+    const n = Number(fallbackPenaltyWeightRatio)
+    if (!Number.isFinite(n) || n <= 0 || n > 1) {
+      res.status(400).json({ error: 'fallbackPenaltyWeightRatio must be in (0, 1]' })
+      return
+    }
+    patch.fallbackPenaltyWeightRatio = Number(n.toFixed(3))
+  }
+
   if (Object.keys(patch).length === 0) {
     res.status(400).json({ error: 'No valid fields provided' })
     return

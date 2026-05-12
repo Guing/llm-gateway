@@ -10,10 +10,19 @@ import path from 'path'
 export interface GatewaySettings {
   /** When true, ANY upstream error (not just retriable ones) triggers fallback */
   fallbackOnAnyError: boolean
+  /** Base penalty duration (ms) for the first consecutive route failure */
+  fallbackPenaltyBaseMs: number
+  /** Maximum penalty duration (ms) for exponential backoff */
+  fallbackPenaltyMaxMs: number
+  /** Effective weight ratio while route is under penalty, 0~1 */
+  fallbackPenaltyWeightRatio: number
 }
 
 const DEFAULTS: GatewaySettings = {
   fallbackOnAnyError: false,
+  fallbackPenaltyBaseMs: 30_000,
+  fallbackPenaltyMaxMs: 5 * 60_000,
+  fallbackPenaltyWeightRatio: 0.2,
 }
 
 function getSettingsPath(): string {

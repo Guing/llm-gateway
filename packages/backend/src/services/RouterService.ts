@@ -26,6 +26,89 @@ export interface RouteCandidate {
   config: ModelRouteConfig
 }
 
+interface RouteHealthState {
+  consecutiveFailures: number
+  penaltyUntil: number
+  lastFailureAt: number
+}
+
+export interface RouteHealthSnapshot {
+  routeId: number
+  consecutiveFailures: number
+  penaltyUntil: number
+  remainingPenaltyMs: number
+}
+
+const routeHealth = new Map<number, RouteHealthState>()
+
+function getPenaltyConfig(): { baseMs: number; maxMs: number; ratio: number } {
+  const s = getSettings()
+  const baseMs = Number.isFinite(s.fallbackPenaltyBaseMs)
+    ? Math.min(3_600_000, Math.max(1000, Math.round(s.fallbackPenaltyBaseMs)))
+    : 30_000
+  const maxMs = Number.isFinite(s.fallbackPenaltyMaxMs)
+    ? Math.min(7_200_000, Math.max(baseMs, Math.round(s.fallbackPenaltyMaxMs)))
+    : 5 * 60_000
+  const ratio = Number.isFinite(s.fallbackPenaltyWeightRatio)
+    ? Math.min(1, Math.max(0.01, s.fallbackPenaltyWeightRatio))
+    : 0.2
+  return { baseMs, maxMs, ratio }
+}
+
+function cleanupRouteHealth(now: number): void {
+  for (const [routeId, state] of routeHealth.entries()) {
+    if (state.penaltyUntil <= now) {
+      routeHealth.delete(routeId)
+    }
+  }
+}
+
+function getEffectiveWeight(route: RouteCandidate, now = Date.now()): number {
+  const { ratio } = getPenaltyConfig()
+  const state = routeHealth.get(route.routeId)
+  if (!state || state.penaltyUntil <= now) return Math.max(1, route.weight)
+  // During penalty window, keep route available but much less likely.
+  return Math.max(1, Math.floor(route.weight * ratio))
+}
+
+export function recordRouteFailure(route: RouteCandidate, reason: string): void {
+  const now = Date.now()
+  const { baseMs, maxMs } = getPenaltyConfig()
+  const current = routeHealth.get(route.routeId)
+  const consecutiveFailures = (current?.consecutiveFailures ?? 0) + 1
+  const penaltyMs = Math.min(maxMs, baseMs * (2 ** (consecutiveFailures - 1)))
+  const penaltyUntil = now + penaltyMs
+
+  routeHealth.set(route.routeId, {
+    consecutiveFailures,
+    penaltyUntil,
+    lastFailureAt: now,
+  })
+
+  logger.warn(
+    `[Router] Health penalty applied to "${route.channelName}/${route.actualModel}"` +
+    ` | failures=${consecutiveFailures} penalty=${Math.round(penaltyMs / 1000)}s` +
+    ` | reason=${reason}`
+  )
+}
+
+function recordRouteSuccess(route: RouteCandidate): void {
+  const state = routeHealth.get(route.routeId)
+  if (!state) return
+
+  const nextFailures = Math.max(0, state.consecutiveFailures - 1)
+  if (nextFailures === 0) {
+    routeHealth.delete(route.routeId)
+    return
+  }
+
+  routeHealth.set(route.routeId, {
+    ...state,
+    consecutiveFailures: nextFailures,
+    penaltyUntil: Math.min(state.penaltyUntil, Date.now()),
+  })
+}
+
 /**
  * Fetch all enabled routes for a virtual model name, ordered by priority DESC.
  */
@@ -61,6 +144,7 @@ export function selectInitialRoute(
   routes: RouteCandidate[]
 ): RouteCandidate | null {
   if (routes.length === 0) return null
+  cleanupRouteHealth(Date.now())
 
   // Group by priority
   const tiers = new Map<number, RouteCandidate[]>()
@@ -78,10 +162,11 @@ export function selectInitialRoute(
 }
 
 function weightedRandom(candidates: RouteCandidate[]): RouteCandidate {
-  const totalWeight = candidates.reduce((sum, c) => sum + c.weight, 0)
+  const now = Date.now()
+  const totalWeight = candidates.reduce((sum, c) => sum + getEffectiveWeight(c, now), 0)
   let rand = Math.random() * totalWeight
   for (const candidate of candidates) {
-    rand -= candidate.weight
+    rand -= getEffectiveWeight(candidate, now)
     if (rand <= 0) return candidate
   }
   return candidates[candidates.length - 1]
@@ -98,6 +183,7 @@ export async function executeWithFallback<T>(
   if (routes.length === 0) {
     throw new Error('No routes configured for this model')
   }
+  cleanupRouteHealth(Date.now())
 
   // Group by priority, sorted DESC
   const tiers = new Map<number, RouteCandidate[]>()
@@ -120,6 +206,7 @@ export async function executeWithFallback<T>(
       while (attempt <= maxRetries) {
         try {
           const result = await fn(route)
+          recordRouteSuccess(route)
           return { result, route }
         } catch (err) {
           lastError = err as Error
@@ -132,6 +219,8 @@ export async function executeWithFallback<T>(
             message.includes('429') ||
             message.includes('rate limit') ||
             message.includes('timeout') ||
+            message.includes('Premature close') ||
+            message.includes('stream start timeout') ||
             message.includes('ECONNREFUSED') ||
             message.includes('ECONNRESET') ||
             message.includes('500') ||
@@ -159,6 +248,7 @@ export async function executeWithFallback<T>(
           if (attempt <= maxRetries) {
             logger.warn(`[Router] Channel "${route.channelName}" failed (${message}), retrying (${attempt}/${maxRetries})...`)
           } else {
+            recordRouteFailure(route, message)
             logger.warn(`[Router] Channel "${route.channelName}" failed (${message}), trying next...`)
           }
         }
@@ -169,6 +259,20 @@ export async function executeWithFallback<T>(
   throw lastError
 }
 
+export function getRouteHealthSnapshot(): RouteHealthSnapshot[] {
+  const now = Date.now()
+  cleanupRouteHealth(now)
+  return [...routeHealth.entries()]
+    .map(([routeId, state]) => ({
+      routeId,
+      consecutiveFailures: state.consecutiveFailures,
+      penaltyUntil: state.penaltyUntil,
+      remainingPenaltyMs: Math.max(0, state.penaltyUntil - now),
+    }))
+    .filter((x) => x.remainingPenaltyMs > 0)
+    .sort((a, b) => b.remainingPenaltyMs - a.remainingPenaltyMs)
+}
+
 /**
  * Return a weight-biased shuffle of candidates
  * (higher weight = more likely to appear early).
@@ -176,13 +280,14 @@ export async function executeWithFallback<T>(
 function weightedShuffle(candidates: RouteCandidate[]): RouteCandidate[] {
   const result: RouteCandidate[] = []
   const remaining = [...candidates]
+  const now = Date.now()
 
   while (remaining.length > 0) {
-    const totalWeight = remaining.reduce((sum, c) => sum + c.weight, 0)
+    const totalWeight = remaining.reduce((sum, c) => sum + getEffectiveWeight(c, now), 0)
     let rand = Math.random() * totalWeight
     let idx = 0
     for (let i = 0; i < remaining.length; i++) {
-      rand -= remaining[i].weight
+      rand -= getEffectiveWeight(remaining[i], now)
       if (rand <= 0) {
         idx = i
         break

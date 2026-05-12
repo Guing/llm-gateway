@@ -10,32 +10,106 @@
       </el-button>
     </div>
 
-    <!-- Fallback 机制说明 + 全局开关 -->
+    <!-- Fallback 机制说明 + 配置入口 -->
     <el-card shadow="never" class="mb-6 border border-blue-100 bg-blue-50/40">
-      <div class="flex items-start gap-3">
-        <el-icon class="text-blue-500 mt-0.5 shrink-0" size="18"><InfoFilled /></el-icon>
-        <div class="flex-1 min-w-0">
-          <div class="font-semibold text-blue-700 mb-1">Fallback 机制说明</div>
-          <ul class="text-sm text-blue-600 space-y-0.5 list-disc list-inside">
-            <li>优先级高的上游渠道优先使用；同优先级按权重随机分配</li>
-            <li>遇到可重试错误（429 / 限速 / 超时 / 502 / 503 / 500 / 连接失败 / 配额耗尽）时，自动切换到下一个渠道</li>
-            <li>遇到非重试错误（400 参数错误 / 401 认证失败 / 404 模型不存在）时，默认直接返回错误，不继续尝试</li>
-            <li>所有优先级层全部失败后，返回最后一次的错误信息给客户端</li>
-          </ul>
-          <el-divider class="my-3" />
-          <div class="flex items-center gap-3">
-            <span class="text-sm font-medium text-gray-700">任何错误都触发 Fallback</span>
-            <el-switch
-              v-model="fallbackOnAnyError"
-              :loading="settingsLoading"
-              active-text="开启"
-              inactive-text="关闭"
-              @change="saveFallbackSetting"
-            />
-            <span class="text-xs text-gray-400">开启后，所有上游错误（包括 400/401/404）均会尝试切换到下一个渠道</span>
+      <div class="flex items-center justify-between gap-3">
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="font-semibold text-blue-700">Fallback 机制说明</span>
+          <el-tooltip placement="top" effect="dark">
+            <template #content>
+              <div class="max-w-xs leading-6">
+                <div>优先级高的上游渠道优先使用；同优先级按权重随机分配。</div>
+                <div>可重试错误（429 / 限速 / 超时 / 502 / 503 / 500 / 连接失败 / 配额耗尽）会自动切换到下一个渠道。</div>
+                <div>非重试错误（400 参数错误 / 401 认证失败 / 404 模型不存在）默认直接返回。</div>
+                <div>所有优先级层全部失败后，返回最后一次错误给客户端。</div>
+              </div>
+            </template>
+            <el-icon class="text-blue-500 cursor-help shrink-0"><InfoFilled /></el-icon>
+          </el-tooltip>
+        </div>
+        <el-button type="primary" plain @click="openFallbackDialog">
+          <el-icon class="mr-1"><Setting /></el-icon>
+          Fallback
+        </el-button>
+      </div>
+      <div class="mt-3 text-sm text-blue-600">
+        当前状态：
+        <span class="font-medium">{{ fallbackOnAnyError ? '任何错误都触发 Fallback' : '仅可重试错误触发 Fallback' }}</span>
+      </div>
+    </el-card>
+
+    <el-dialog v-model="fallbackDialogVisible" title="Fallback 配置" width="720px" destroy-on-close>
+      <div class="space-y-5">
+        <div class="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+          <div>
+            <div class="font-medium text-gray-800">任何错误都触发 Fallback</div>
+            <div class="text-xs text-gray-500 mt-1">开启后，所有上游错误（包括 400/401/404）均会尝试切换到下一个渠道</div>
+          </div>
+          <el-switch
+            v-model="fallbackOnAnyError"
+            :loading="settingsLoading"
+            active-text="开启"
+            inactive-text="关闭"
+          />
+        </div>
+
+        <div>
+          <div class="text-sm font-medium text-gray-700 mb-3">Fallback 惩罚参数</div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <div class="text-xs text-gray-500 mb-1">基础惩罚时长（秒）</div>
+              <el-input-number v-model="fallbackPenaltyBaseSec" :min="1" :max="3600" :step="1" class="w-full" />
+            </div>
+            <div>
+              <div class="text-xs text-gray-500 mb-1">惩罚上限（秒）</div>
+              <el-input-number v-model="fallbackPenaltyMaxSec" :min="1" :max="7200" :step="1" class="w-full" />
+            </div>
+            <div>
+              <div class="text-xs text-gray-500 mb-1">降权比例（%）</div>
+              <el-input-number v-model="fallbackPenaltyWeightPercent" :min="1" :max="100" :step="1" class="w-full" />
+            </div>
+          </div>
+          <div class="text-xs text-gray-400 mt-2">
+            失败惩罚采用指数退避：第 N 次连续失败惩罚 = min(上限, 基础时长 × 2^(N-1))；惩罚期内有效权重 = 原权重 × 降权比例。
           </div>
         </div>
       </div>
+
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <el-button @click="fallbackDialogVisible = false">取消</el-button>
+          <el-button type="primary" :loading="settingsLoading" @click="savePenaltySettings">保存配置</el-button>
+        </div>
+      </template>
+    </el-dialog>
+
+    <el-card shadow="never" class="mb-6 border">
+      <template #header>
+        <div class="flex items-center justify-between">
+          <div class="font-semibold text-gray-700">路由健康状态</div>
+          <el-button size="small" :loading="healthLoading" @click="loadRouteHealth">刷新</el-button>
+        </div>
+      </template>
+      <el-table :data="healthRows" size="small" row-key="id" max-height="320">
+        <el-table-column label="虚拟模型" min-width="130" prop="virtualModel" />
+        <el-table-column label="渠道/模型" min-width="220">
+          <template #default="{ row }">
+            <span class="text-gray-700">{{ row.channelName }}</span>
+            <span class="text-gray-300 mx-1">/</span>
+            <code class="text-xs bg-gray-100 px-1.5 py-0.5 rounded">{{ row.actualModel }}</code>
+          </template>
+        </el-table-column>
+        <el-table-column label="原权重" width="90" prop="weight" />
+        <el-table-column label="有效权重" width="90" prop="effectiveWeight" />
+        <el-table-column label="连续失败" width="90" prop="consecutiveFailures" />
+        <el-table-column label="惩罚剩余" width="120">
+          <template #default="{ row }">
+            <el-tag :type="row.remainingPenaltyMs > 0 ? 'warning' : 'success'" size="small">
+              {{ formatDuration(row.remainingPenaltyMs) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
     </el-card>
 
     <div v-if="loading" class="text-center py-16 text-gray-400">
@@ -136,9 +210,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { InfoFilled } from '@element-plus/icons-vue'
+import { InfoFilled, Setting } from '@element-plus/icons-vue'
 import { useAdminStore } from '@/stores/admin'
 import client from '@/api/client'
 
@@ -146,7 +220,12 @@ const adminStore = useAdminStore()
 const loading = ref(false)
 const saving = ref(false)
 const settingsLoading = ref(false)
+const healthLoading = ref(false)
+const fallbackDialogVisible = ref(false)
 const fallbackOnAnyError = ref(false)
+const fallbackPenaltyBaseSec = ref(30)
+const fallbackPenaltyMaxSec = ref(300)
+const fallbackPenaltyWeightPercent = ref(20)
 
 interface RouteRow {
   id: number
@@ -170,7 +249,18 @@ interface RouteGroup {
   routes: RouteRow[]
 }
 
+interface RouteHealthRow {
+  routeId: number
+  consecutiveFailures: number
+  penaltyUntil: number
+  remainingPenaltyMs: number
+}
+
 const rows = ref<RouteRow[]>([])
+const routeHealthMap = ref<Record<number, RouteHealthRow>>({})
+const nowTs = ref(Date.now())
+let healthPollTimer: number | undefined
+let healthTickTimer: number | undefined
 
 const groups = computed<RouteGroup[]>(() => {
   const map = new Map<string, RouteRow[]>()
@@ -191,16 +281,38 @@ const PROVIDERS: Record<string, 'primary' | 'warning' | 'info' | 'success'> = {
 }
 function providerTagType(p: string) { return PROVIDERS[p] ?? 'info' }
 
+function openFallbackDialog() {
+  fallbackDialogVisible.value = true
+}
+
 const MODEL_TYPE_LABELS: Record<string, string> = {
-  'chat': '文本',
-  'vision': '视觉',
+  'chat': '对话',
+  'vision': '视觉理解',
   'function-calling': '工具调用',
-  'reasoning': '推理',
-  'embedding': '嵌入',
+  'reasoning': '深度推理',
+  'embedding': '文本嵌入',
+  'rerank': '重排序',
   'image-generation': '图像生成',
-  'audio': '语音',
+  'audio': '语音处理',
   'video-generation': '视频生成',
 }
+
+const healthRows = computed(() => rows.value
+  .map((r) => {
+    const h = routeHealthMap.value[r.id]
+    const remaining = h ? Math.max(0, h.penaltyUntil - nowTs.value) : 0
+    const ratio = fallbackPenaltyWeightPercent.value / 100
+    return {
+      ...r,
+      consecutiveFailures: h?.consecutiveFailures ?? 0,
+      remainingPenaltyMs: remaining,
+      effectiveWeight: remaining > 0
+        ? Math.max(1, Math.floor(r.weight * ratio))
+        : r.weight,
+    }
+  })
+  .sort((a, b) => b.remainingPenaltyMs - a.remainingPenaltyMs || a.virtualModel.localeCompare(b.virtualModel))
+)
 
 async function loadRoutes() {
   loading.value = true
@@ -211,7 +323,16 @@ async function loadRoutes() {
       client.get('/admin/settings').catch(() => null),
     ])
     if (settingsRes) {
-      fallbackOnAnyError.value = !!(settingsRes.data as { fallbackOnAnyError?: boolean }).fallbackOnAnyError
+      const s = settingsRes.data as {
+        fallbackOnAnyError?: boolean
+        fallbackPenaltyBaseMs?: number
+        fallbackPenaltyMaxMs?: number
+        fallbackPenaltyWeightRatio?: number
+      }
+      fallbackOnAnyError.value = !!s.fallbackOnAnyError
+      fallbackPenaltyBaseSec.value = Math.max(1, Math.round((s.fallbackPenaltyBaseMs ?? 30_000) / 1000))
+      fallbackPenaltyMaxSec.value = Math.max(1, Math.round((s.fallbackPenaltyMaxMs ?? 300_000) / 1000))
+      fallbackPenaltyWeightPercent.value = Math.max(1, Math.min(100, Math.round((s.fallbackPenaltyWeightRatio ?? 0.2) * 100)))
     }
     const newRows: RouteRow[] = []
     for (const ch of adminStore.channels) {
@@ -238,23 +359,59 @@ async function loadRoutes() {
       }
     }
     rows.value = newRows
+    await loadRouteHealth()
   } finally {
     loading.value = false
   }
 }
 
-async function saveFallbackSetting(val: boolean | string | number) {
+async function savePenaltySettings() {
+  if (fallbackPenaltyBaseSec.value > fallbackPenaltyMaxSec.value) {
+    ElMessage.warning('基础惩罚时长不能大于惩罚上限')
+    return
+  }
+
   settingsLoading.value = true
   try {
-    await client.put('/admin/settings', { fallbackOnAnyError: val })
-    ElMessage.success(val ? '已开启：任何错误触发 Fallback' : '已关闭：仅可重试错误触发 Fallback')
-  } catch {
-    ElMessage.error('设置保存失败')
-    // Revert
-    fallbackOnAnyError.value = !val
+    await client.put('/admin/settings', {
+      fallbackOnAnyError: fallbackOnAnyError.value,
+      fallbackPenaltyBaseMs: fallbackPenaltyBaseSec.value * 1000,
+      fallbackPenaltyMaxMs: fallbackPenaltyMaxSec.value * 1000,
+      fallbackPenaltyWeightRatio: Number((fallbackPenaltyWeightPercent.value / 100).toFixed(3)),
+    })
+    ElMessage.success('Fallback 配置已保存')
+    fallbackDialogVisible.value = false
+    await loadRouteHealth()
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: { error?: string } } }
+    ElMessage.error(e.response?.data?.error ?? '保存失败')
   } finally {
     settingsLoading.value = false
   }
+}
+
+async function loadRouteHealth() {
+  healthLoading.value = true
+  try {
+    const res = await client.get('/admin/routes/health')
+    const list = (res.data as RouteHealthRow[]) ?? []
+    const next: Record<number, RouteHealthRow> = {}
+    for (const item of list) next[item.routeId] = item
+    routeHealthMap.value = next
+    nowTs.value = Date.now()
+  } catch {
+    // Best effort only
+  } finally {
+    healthLoading.value = false
+  }
+}
+
+function formatDuration(ms: number): string {
+  if (ms <= 0) return '0s'
+  const sec = Math.ceil(ms / 1000)
+  const m = Math.floor(sec / 60)
+  const s = sec % 60
+  return m > 0 ? `${m}m ${s}s` : `${s}s`
 }
 
 async function saveAll() {
@@ -298,5 +455,14 @@ async function deleteRoute(id: number, virtualModel: string) {
   ElMessage.success('已删除')
 }
 
-onMounted(loadRoutes)
+onMounted(async () => {
+  await loadRoutes()
+  healthPollTimer = window.setInterval(loadRouteHealth, 5000)
+  healthTickTimer = window.setInterval(() => { nowTs.value = Date.now() }, 1000)
+})
+
+onBeforeUnmount(() => {
+  if (healthPollTimer) window.clearInterval(healthPollTimer)
+  if (healthTickTimer) window.clearInterval(healthTickTimer)
+})
 </script>
