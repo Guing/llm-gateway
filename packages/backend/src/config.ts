@@ -10,4 +10,8 @@ export const config = {
   corsOrigins: (process.env.CORS_ORIGIN || 'http://localhost:5173,http://127.0.0.1:5173').split(','),
   // Set LOG_VERBOSE=true to enable detailed upstream request/response body logging
   logVerbose: process.env.LOG_VERBOSE === 'true',
+  // Set SSE_MIRROR_DEBUG=true to mirror outgoing SSE data-line summaries for stream debugging.
+  sseMirrorDebug: process.env.SSE_MIRROR_DEBUG === 'true',
+  // Max number of mirrored data lines per request (default 20).
+  sseMirrorMaxLines: Math.max(1, parseInt(process.env.SSE_MIRROR_MAX_LINES || '20', 10) || 20),
 }

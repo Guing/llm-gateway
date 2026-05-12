@@ -15,6 +15,7 @@ import {
   openAIResponseToAnthropic,
 } from '../services/ProxyService'
 import { StreamInterceptor } from '../services/StreamInterceptor'
+import { config } from '../config'
 
 const router: IRouter = Router()
 router.use(apiKeyAuth)
@@ -520,7 +521,12 @@ async function handleStreaming(
       incomingFormat === 'openai-responses' ? 'openai-responses' : expectedProxyFormat
 
     // Create transform with format conversion support
-    const transform = interceptor.createTransform(upstreamFormat, streamTargetFormat, { responseModel: virtualModel })
+    const transform = interceptor.createTransform(upstreamFormat, streamTargetFormat, {
+      responseModel: virtualModel,
+      sseMirrorDebug: config.sseMirrorDebug,
+      sseMirrorMaxLines: config.sseMirrorMaxLines,
+      sseMirrorTag: `${virtualModel} -> ${route.channelName}/${route.actualModel}`,
+    })
 
     // When streaming completes, save the full log
     interceptor.once('done', async (data: { fullContent: string; promptTokens?: number; completionTokens?: number }) => {

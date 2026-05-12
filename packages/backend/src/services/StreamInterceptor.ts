@@ -1,5 +1,6 @@
 import { Transform } from 'stream'
 import { EventEmitter } from 'events'
+import { logger } from '../lib/logger'
 
 export interface SSEEvent {
   event: string
@@ -29,6 +30,12 @@ export class StreamInterceptor extends EventEmitter {
   private responseModel: string = ''
   private responseCreatedAt: number = Math.floor(Date.now() / 1000)
   private functionCalls: Map<number, ResponsesFunctionCallState> = new Map()
+  private responseMessageItemAdded: boolean = false
+  private sseMirrorDebug: boolean = false
+  private sseMirrorMaxLines: number = 20
+  private sseMirrorTag: string = ''
+  private sseMirrorSeen: number = 0
+  private sseMirrorCappedLogged: boolean = false
 
   /** Accumulated full assistant response content */
   public fullContent: string = ''
@@ -38,7 +45,12 @@ export class StreamInterceptor extends EventEmitter {
   createTransform(
     upstreamFormat: 'openai' | 'anthropic' | 'custom',
     targetFormat?: 'openai' | 'anthropic' | 'openai-responses',
-    options?: { responseModel?: string }
+    options?: {
+      responseModel?: string
+      sseMirrorDebug?: boolean
+      sseMirrorMaxLines?: number
+      sseMirrorTag?: string
+    }
   ): Transform {
     this.responsesStreamStarted = false
     this.responseId = `resp_${Date.now()}`
@@ -46,6 +58,14 @@ export class StreamInterceptor extends EventEmitter {
     this.responseModel = options?.responseModel ?? ''
     this.responseCreatedAt = Math.floor(Date.now() / 1000)
     this.functionCalls = new Map()
+    this.responseMessageItemAdded = false
+    this.sseMirrorDebug = options?.sseMirrorDebug === true
+    this.sseMirrorMaxLines = options?.sseMirrorMaxLines && options.sseMirrorMaxLines > 0
+      ? options.sseMirrorMaxLines
+      : 20
+    this.sseMirrorTag = options?.sseMirrorTag ?? ''
+    this.sseMirrorSeen = 0
+    this.sseMirrorCappedLogged = false
 
     return new Transform({
       transform: (chunk: Buffer, _encoding, callback) => {
@@ -69,7 +89,9 @@ export class StreamInterceptor extends EventEmitter {
         }
 
         // Pass through transformed bytes
-        callback(null, Buffer.from(output.join('\n') + (output.length > 0 ? '\n' : '')))
+        const outText = output.join('\n') + (output.length > 0 ? '\n' : '')
+        this.mirrorSseOutput(outText)
+        callback(null, Buffer.from(outText))
       },
 
       flush: (callback) => {
@@ -104,6 +126,7 @@ export class StreamInterceptor extends EventEmitter {
         })
 
         if (flushOutput) {
+          this.mirrorSseOutput(flushOutput)
           callback(null, Buffer.from(flushOutput))
         } else {
           callback()
@@ -278,7 +301,49 @@ export class StreamInterceptor extends EventEmitter {
   }
 
   private sse(event: string, data: Record<string, unknown>): string {
-    return `event: ${event}\ndata: ${JSON.stringify(data)}\n`
+    // Use data-only framing for better OpenAI Responses client compatibility.
+    return `data: ${JSON.stringify({ ...data, type: event })}\n\n`
+  }
+
+  private summarizeSseDataLine(rawData: string): string {
+    if (rawData === '[DONE]') return 'DONE'
+
+    try {
+      const parsed = JSON.parse(rawData) as Record<string, unknown>
+      const type = typeof parsed.type === 'string' ? parsed.type : 'unknown'
+      const keys = Object.keys(parsed)
+      const deltaLen = typeof parsed.delta === 'string' ? parsed.delta.length : 0
+      const textLen = typeof parsed.text === 'string' ? parsed.text.length : 0
+      const argsLen = typeof parsed.arguments === 'string' ? parsed.arguments.length : 0
+      return `type=${type} keys=${keys.join(',')} lens(delta=${deltaLen},text=${textLen},args=${argsLen})`
+    } catch {
+      return `non-json len=${rawData.length}`
+    }
+  }
+
+  private mirrorSseOutput(outputText: string): void {
+    if (!this.sseMirrorDebug || !outputText) return
+
+    const lines = outputText.split('\n')
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue
+
+      this.sseMirrorSeen += 1
+      if (this.sseMirrorSeen <= this.sseMirrorMaxLines) {
+        const summary = this.summarizeSseDataLine(line.slice(6))
+        logger.info(
+          `[SSE-Mirror] ${this.sseMirrorTag || '-'} #${this.sseMirrorSeen} ${summary}`
+        )
+        continue
+      }
+
+      if (!this.sseMirrorCappedLogged) {
+        this.sseMirrorCappedLogged = true
+        logger.info(
+          `[SSE-Mirror] ${this.sseMirrorTag || '-'} capped at ${this.sseMirrorMaxLines} lines`
+        )
+      }
+    }
   }
 
   private ensureResponseMetaFromOpenAIChunk(data: Record<string, unknown>): void {
@@ -345,7 +410,6 @@ export class StreamInterceptor extends EventEmitter {
     for (const toolCall of [...this.functionCalls.values()].sort((a, b) => a.outputIndex - b.outputIndex)) {
       parts.push(
         this.sse('response.function_call_arguments.done', {
-          type: 'response.function_call_arguments.done',
           response_id: this.responseId,
           output_index: toolCall.outputIndex,
           item_id: toolCall.id,
@@ -354,7 +418,6 @@ export class StreamInterceptor extends EventEmitter {
       )
       parts.push(
         this.sse('response.output_item.done', {
-          type: 'response.output_item.done',
           response_id: this.responseId,
           output_index: toolCall.outputIndex,
           item: {
@@ -369,9 +432,29 @@ export class StreamInterceptor extends EventEmitter {
       )
     }
 
+    if (this.responseMessageItemAdded) {
+      parts.push(
+        this.sse('response.output_item.done', {
+          response_id: this.responseId,
+          output_index: 0,
+          item: {
+            id: this.responseOutputItemId,
+            type: 'message',
+            role: 'assistant',
+            content: [
+              {
+                type: 'output_text',
+                text: this.fullContent,
+                annotations: [],
+              },
+            ],
+          },
+        })
+      )
+    }
+
     parts.push(
       this.sse('response.output_text.done', {
-        type: 'response.output_text.done',
         response_id: this.responseId,
         output_index: 0,
         item_id: this.responseOutputItemId,
@@ -381,11 +464,10 @@ export class StreamInterceptor extends EventEmitter {
     )
     parts.push(
       this.sse('response.completed', {
-        type: 'response.completed',
         response: this.buildResponseBase('completed'),
       })
     )
-    parts.push('data: [DONE]\n')
+    parts.push('data: [DONE]\n\n')
     return parts.join('\n')
   }
 
@@ -406,8 +488,29 @@ export class StreamInterceptor extends EventEmitter {
       this.responsesStreamStarted = true
       parts.push(
         this.sse('response.created', {
-          type: 'response.created',
           response: this.buildResponseBase('in_progress'),
+        })
+      )
+    }
+
+    if (!this.responseMessageItemAdded) {
+      this.responseMessageItemAdded = true
+      parts.push(
+        this.sse('response.output_item.added', {
+          response_id: this.responseId,
+          output_index: 0,
+          item: {
+            id: this.responseOutputItemId,
+            type: 'message',
+            role: 'assistant',
+            content: [
+              {
+                type: 'output_text',
+                text: '',
+                annotations: [],
+              },
+            ],
+          },
         })
       )
     }
@@ -426,7 +529,6 @@ export class StreamInterceptor extends EventEmitter {
     if (typeof deltaText === 'string' && deltaText.length > 0) {
       parts.push(
         this.sse('response.output_text.delta', {
-          type: 'response.output_text.delta',
           response_id: this.responseId,
           output_index: 0,
           item_id: this.responseOutputItemId,
@@ -463,7 +565,6 @@ export class StreamInterceptor extends EventEmitter {
       if (isNew) {
         parts.push(
           this.sse('response.output_item.added', {
-            type: 'response.output_item.added',
             response_id: this.responseId,
             output_index: existing.outputIndex,
             item: {
@@ -481,7 +582,6 @@ export class StreamInterceptor extends EventEmitter {
       if (argumentDelta) {
         parts.push(
           this.sse('response.function_call_arguments.delta', {
-            type: 'response.function_call_arguments.delta',
             response_id: this.responseId,
             output_index: existing.outputIndex,
             item_id: existing.id,
