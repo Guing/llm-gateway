@@ -21,6 +21,25 @@ router.use(apiKeyAuth)
 
 type GatewayFormat = 'openai' | 'anthropic' | 'openai-responses'
 
+interface OpenAIToolCall {
+  id?: string
+  type?: string
+  function?: {
+    name?: string
+    arguments?: string
+  }
+}
+
+function stringifyResponsesValue(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (value == null) return ''
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
 function extractResponsesTextContent(content: unknown): string {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) return ''
@@ -38,14 +57,14 @@ function extractResponsesTextContent(content: unknown): string {
     .join('')
 }
 
-function responsesInputToMessages(input: unknown): Array<{ role: 'user' | 'assistant'; content: string }> {
+function responsesInputToMessages(input: unknown): Array<Record<string, unknown>> {
   if (typeof input === 'string') {
     return [{ role: 'user', content: input }]
   }
 
   if (!Array.isArray(input)) return []
 
-  const messages: Array<{ role: 'user' | 'assistant'; content: string }> = []
+  const messages: Array<Record<string, unknown>> = []
   for (const item of input) {
     if (!item || typeof item !== 'object') continue
     const entry = item as Record<string, unknown>
@@ -59,6 +78,41 @@ function responsesInputToMessages(input: unknown): Array<{ role: 'user' | 'assis
 
     if (entry.type === 'input_text' && typeof entry.text === 'string') {
       messages.push({ role: 'user', content: entry.text })
+      continue
+    }
+
+    if (entry.type === 'function_call') {
+      const name = typeof entry.name === 'string' ? entry.name : ''
+      const callId = typeof entry.call_id === 'string'
+        ? entry.call_id
+        : (typeof entry.id === 'string' ? entry.id : `call_${Date.now()}`)
+      if (!name) continue
+
+      messages.push({
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: callId,
+            type: 'function',
+            function: {
+              name,
+              arguments: stringifyResponsesValue(entry.arguments ?? ''),
+            },
+          },
+        ],
+      })
+      continue
+    }
+
+    if (entry.type === 'function_call_output') {
+      const callId = typeof entry.call_id === 'string' ? entry.call_id : ''
+      if (!callId) continue
+      messages.push({
+        role: 'tool',
+        tool_call_id: callId,
+        content: stringifyResponsesValue(entry.output),
+      })
     }
   }
 
@@ -102,15 +156,49 @@ function extractChatCompletionText(responseData: Record<string, unknown>): strin
   return extractResponsesTextContent(content)
 }
 
+function extractChatCompletionToolCalls(responseData: Record<string, unknown>): OpenAIToolCall[] {
+  const choices = responseData.choices as Array<{
+    message?: { tool_calls?: OpenAIToolCall[] }
+  }> | undefined
+  return choices?.[0]?.message?.tool_calls ?? []
+}
+
 function mapOpenAIToResponses(responseData: Record<string, unknown>, virtualModel: string): Record<string, unknown> {
   const usage = responseData.usage as
     | { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
     | undefined
 
   const outputText = extractChatCompletionText(responseData)
+  const toolCalls = extractChatCompletionToolCalls(responseData)
   const createdAt = typeof responseData.created === 'number'
     ? responseData.created
     : Math.floor(Date.now() / 1000)
+
+  const output: Array<Record<string, unknown>> = [
+    {
+      id: `msg_${Date.now()}`,
+      type: 'message',
+      role: 'assistant',
+      content: [
+        {
+          type: 'output_text',
+          text: outputText,
+          annotations: [],
+        },
+      ],
+    },
+  ]
+
+  output.push(
+    ...toolCalls.map((toolCall, index) => ({
+      id: toolCall.id ?? `fc_${Date.now()}_${index}`,
+      type: 'function_call',
+      call_id: toolCall.id ?? `fc_${Date.now()}_${index}`,
+      name: toolCall.function?.name ?? '',
+      arguments: toolCall.function?.arguments ?? '',
+      status: 'completed',
+    }))
+  )
 
   return {
     id: responseData.id ?? `resp_${Date.now()}`,
@@ -118,20 +206,7 @@ function mapOpenAIToResponses(responseData: Record<string, unknown>, virtualMode
     created_at: createdAt,
     status: 'completed',
     model: virtualModel,
-    output: [
-      {
-        id: `msg_${Date.now()}`,
-        type: 'message',
-        role: 'assistant',
-        content: [
-          {
-            type: 'output_text',
-            text: outputText,
-            annotations: [],
-          },
-        ],
-      },
-    ],
+    output,
     output_text: outputText,
     usage: {
       input_tokens: usage?.prompt_tokens ?? 0,

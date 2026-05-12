@@ -80,6 +80,141 @@ function anthropicToOpenAI(req: AnthropicRequest): OpenAIRequest {
 
 type RequestFormat = 'openai' | 'anthropic'
 
+function normalizeOpenAIToolsPayload(body: Record<string, unknown>): void {
+  const mapNonFunctionToolToFunction = (tool: Record<string, unknown>): Record<string, unknown> | null => {
+    if (tool.type === 'custom') {
+      const name = typeof tool.name === 'string' ? tool.name : ''
+      if (!name) return null
+      const parameters =
+        (tool.parameters && typeof tool.parameters === 'object' ? tool.parameters : undefined) ??
+        (tool.input_schema && typeof tool.input_schema === 'object' ? tool.input_schema : undefined) ??
+        { type: 'object', properties: {}, additionalProperties: true }
+
+      return {
+        type: 'function',
+        function: {
+          name,
+          description: typeof tool.description === 'string' ? tool.description : 'Custom tool proxied by gateway compatibility layer.',
+          parameters,
+          strict: typeof tool.strict === 'boolean' ? tool.strict : undefined,
+        },
+      }
+    }
+
+    if (tool.type === 'web_search') {
+      return {
+        type: 'function',
+        function: {
+          name: typeof tool.name === 'string' && tool.name.length > 0 ? tool.name : 'web_search',
+          description: 'Search the web and return relevant results.',
+          parameters: {
+            type: 'object',
+            properties: {
+              query: {
+                type: 'string',
+                description: 'The search query to execute.',
+              },
+            },
+            required: ['query'],
+            additionalProperties: false,
+          },
+        },
+      }
+    }
+
+    return null
+  }
+
+  // Legacy `functions` array -> modern `tools` array.
+  if (!Array.isArray(body.tools) && Array.isArray(body.functions)) {
+    body.tools = (body.functions as Array<Record<string, unknown>>)
+      .map((fn) => {
+        if (!fn || typeof fn !== 'object' || typeof fn.name !== 'string') return null
+        return {
+          type: 'function',
+          function: {
+            name: fn.name,
+            description: typeof fn.description === 'string' ? fn.description : undefined,
+            parameters: fn.parameters,
+          },
+        }
+      })
+      .filter(Boolean) as Array<Record<string, unknown>>
+  }
+
+  if (!Array.isArray(body.tools)) return
+
+  const normalizedTools = (body.tools as Array<Record<string, unknown>>)
+    .map((tool) => {
+      if (!tool || typeof tool !== 'object') return null
+      if (tool.type !== 'function') {
+        return mapNonFunctionToolToFunction(tool)
+      }
+
+      // Already OpenAI Chat Completions format: { type: 'function', function: {...} }
+      if (tool.function && typeof tool.function === 'object') {
+        const fn = tool.function as Record<string, unknown>
+        if (typeof fn.name !== 'string' || fn.name.length === 0) return null
+        return {
+          type: 'function',
+          function: {
+            name: fn.name,
+            description: typeof fn.description === 'string' ? fn.description : undefined,
+            parameters: fn.parameters,
+            strict: typeof fn.strict === 'boolean' ? fn.strict : undefined,
+          },
+        }
+      }
+
+      // Responses-style flattened function tool: { type: 'function', name, parameters, ... }
+      if (typeof tool.name === 'string' && tool.name.length > 0) {
+        return {
+          type: 'function',
+          function: {
+            name: tool.name,
+            description: typeof tool.description === 'string' ? tool.description : undefined,
+            parameters: tool.parameters,
+            strict: typeof tool.strict === 'boolean' ? tool.strict : undefined,
+          },
+        }
+      }
+
+      return null
+    })
+    .filter(Boolean) as Array<Record<string, unknown>>
+
+  if (normalizedTools.length === 0) {
+    delete body.tools
+    delete body.functions
+    delete body.tool_choice
+    delete body.parallel_tool_calls
+    return
+  }
+
+  body.tools = normalizedTools
+
+  // Normalize tool_choice for chat.completions function-call schema.
+  if (body.tool_choice && typeof body.tool_choice === 'object') {
+    const tc = body.tool_choice as Record<string, unknown>
+    if (tc.type === 'function' && !tc.function && typeof tc.name === 'string') {
+      body.tool_choice = {
+        type: 'function',
+        function: { name: tc.name },
+      }
+    } else if ((tc.type === 'custom' || tc.type === 'web_search') && !tc.function) {
+      const functionName = typeof tc.name === 'string' && tc.name.length > 0
+        ? tc.name
+        : (tc.type === 'web_search' ? 'web_search' : '')
+      if (functionName) {
+        body.tool_choice = {
+          type: 'function',
+          function: { name: functionName },
+        }
+      }
+    }
+  }
+}
+
 /**
  * Strip parameters that are not supported by the target route's declared capability types.
  *
@@ -170,6 +305,12 @@ function sanitizeRequestForRoute(
         return { ...msg, content: textParts }
       })
     }
+  }
+
+  // OpenAI chat.completions only accepts function tools with nested `function` schema.
+  // Normalize payload from Responses-style or legacy client formats.
+  if (format === 'openai') {
+    normalizeOpenAIToolsPayload(b)
   }
 
   return b

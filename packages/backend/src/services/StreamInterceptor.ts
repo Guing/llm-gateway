@@ -6,6 +6,14 @@ export interface SSEEvent {
   data: string
 }
 
+interface ResponsesFunctionCallState {
+  id: string
+  callId: string
+  name: string
+  arguments: string
+  outputIndex: number
+}
+
 /**
  * Intercepts SSE (Server-Sent Events) stream, parses content deltas,
  * optionally converts between OpenAI ↔ Anthropic formats,
@@ -20,6 +28,7 @@ export class StreamInterceptor extends EventEmitter {
   private responseOutputItemId: string = `msg_${Date.now()}`
   private responseModel: string = ''
   private responseCreatedAt: number = Math.floor(Date.now() / 1000)
+  private functionCalls: Map<number, ResponsesFunctionCallState> = new Map()
 
   /** Accumulated full assistant response content */
   public fullContent: string = ''
@@ -36,6 +45,7 @@ export class StreamInterceptor extends EventEmitter {
     this.responseOutputItemId = `msg_${Date.now()}`
     this.responseModel = options?.responseModel ?? ''
     this.responseCreatedAt = Math.floor(Date.now() / 1000)
+    this.functionCalls = new Map()
 
     return new Transform({
       transform: (chunk: Buffer, _encoding, callback) => {
@@ -282,26 +292,41 @@ export class StreamInterceptor extends EventEmitter {
 
   private buildResponseBase(status: 'in_progress' | 'completed'): Record<string, unknown> {
     const outputText = this.fullContent
+    const output: Array<Record<string, unknown>> = []
+
+    if (outputText || this.functionCalls.size === 0) {
+      output.push({
+        id: this.responseOutputItemId,
+        type: 'message',
+        role: 'assistant',
+        content: [
+          {
+            type: 'output_text',
+            text: outputText,
+            annotations: [],
+          },
+        ],
+      })
+    }
+
+    for (const toolCall of [...this.functionCalls.values()].sort((a, b) => a.outputIndex - b.outputIndex)) {
+      output.push({
+        id: toolCall.id,
+        type: 'function_call',
+        call_id: toolCall.callId,
+        name: toolCall.name,
+        arguments: toolCall.arguments,
+        status: status === 'completed' ? 'completed' : 'in_progress',
+      })
+    }
+
     return {
       id: this.responseId,
       object: 'response',
       created_at: this.responseCreatedAt,
       status,
       model: this.responseModel,
-      output: [
-        {
-          id: this.responseOutputItemId,
-          type: 'message',
-          role: 'assistant',
-          content: [
-            {
-              type: 'output_text',
-              text: outputText,
-              annotations: [],
-            },
-          ],
-        },
-      ],
+      output,
       output_text: outputText,
       usage: {
         input_tokens: this.promptTokens ?? 0,
@@ -317,6 +342,33 @@ export class StreamInterceptor extends EventEmitter {
     }
 
     const parts: string[] = []
+    for (const toolCall of [...this.functionCalls.values()].sort((a, b) => a.outputIndex - b.outputIndex)) {
+      parts.push(
+        this.sse('response.function_call_arguments.done', {
+          type: 'response.function_call_arguments.done',
+          response_id: this.responseId,
+          output_index: toolCall.outputIndex,
+          item_id: toolCall.id,
+          arguments: toolCall.arguments,
+        })
+      )
+      parts.push(
+        this.sse('response.output_item.done', {
+          type: 'response.output_item.done',
+          response_id: this.responseId,
+          output_index: toolCall.outputIndex,
+          item: {
+            id: toolCall.id,
+            type: 'function_call',
+            call_id: toolCall.callId,
+            name: toolCall.name,
+            arguments: toolCall.arguments,
+            status: 'completed',
+          },
+        })
+      )
+    }
+
     parts.push(
       this.sse('response.output_text.done', {
         type: 'response.output_text.done',
@@ -361,7 +413,14 @@ export class StreamInterceptor extends EventEmitter {
     }
 
     const choices = openAIChunk.choices as Array<{
-      delta?: { content?: string }
+      delta?: {
+        content?: string
+        tool_calls?: Array<{
+          index?: number
+          id?: string
+          function?: { name?: string; arguments?: string }
+        }>
+      }
     }> | undefined
     const deltaText = choices?.[0]?.delta?.content
     if (typeof deltaText === 'string' && deltaText.length > 0) {
@@ -375,6 +434,61 @@ export class StreamInterceptor extends EventEmitter {
           delta: deltaText,
         })
       )
+    }
+
+    const toolCalls = choices?.[0]?.delta?.tool_calls ?? []
+    for (const toolCall of toolCalls) {
+      const index = toolCall.index ?? 0
+      const existing = this.functionCalls.get(index) ?? {
+        id: toolCall.id ?? `fc_${Date.now()}_${index}`,
+        callId: toolCall.id ?? `fc_${Date.now()}_${index}`,
+        name: toolCall.function?.name ?? '',
+        arguments: '',
+        outputIndex: index + 1,
+      }
+
+      if (toolCall.id) {
+        existing.id = toolCall.id
+        existing.callId = toolCall.id
+      }
+      if (toolCall.function?.name) {
+        existing.name = toolCall.function.name
+      }
+
+      const argumentDelta = toolCall.function?.arguments ?? ''
+      const isNew = !this.functionCalls.has(index)
+      existing.arguments += argumentDelta
+      this.functionCalls.set(index, existing)
+
+      if (isNew) {
+        parts.push(
+          this.sse('response.output_item.added', {
+            type: 'response.output_item.added',
+            response_id: this.responseId,
+            output_index: existing.outputIndex,
+            item: {
+              id: existing.id,
+              type: 'function_call',
+              call_id: existing.callId,
+              name: existing.name,
+              arguments: '',
+              status: 'in_progress',
+            },
+          })
+        )
+      }
+
+      if (argumentDelta) {
+        parts.push(
+          this.sse('response.function_call_arguments.delta', {
+            type: 'response.function_call_arguments.delta',
+            response_id: this.responseId,
+            output_index: existing.outputIndex,
+            item_id: existing.id,
+            delta: argumentDelta,
+          })
+        )
+      }
     }
 
     return parts.join('\n')
