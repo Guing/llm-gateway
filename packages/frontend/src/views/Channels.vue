@@ -2,9 +2,48 @@
   <div class="p-6">
     <div class="flex justify-between items-center mb-6">
       <h2 class="text-2xl font-bold text-gray-800">上游渠道管理</h2>
-      <el-button type="primary" @click="openCreate">
-        <el-icon class="mr-1"><Plus /></el-icon>添加渠道
-      </el-button>
+      <div class="flex items-center gap-2">
+        <el-button @click="openQuickImport">
+          <el-icon class="mr-1"><UploadFilled /></el-icon>快速导入
+        </el-button>
+        <el-button @click="openExportDialog">
+          <el-icon class="mr-1"><Download /></el-icon>导出全部 JSON
+        </el-button>
+        <el-button type="primary" @click="openCreate">
+          <el-icon class="mr-1"><Plus /></el-icon>添加渠道
+        </el-button>
+      </div>
+        <el-dialog
+          v-model="exportDialogVisible"
+          title="导出全部渠道 JSON"
+          width="900px"
+          :close-on-click-modal="false"
+        >
+          <div class="space-y-3">
+            <el-alert type="info" :closable="false" show-icon>
+              <template #title>
+                导出格式与快速导入完全兼容，含 $schema 字段。可直接复制、保存或粘贴到导入弹窗。
+              </template>
+            </el-alert>
+            <div class="flex items-center justify-between">
+              <div class="text-xs text-gray-500">Schema: {{ CHANNEL_IMPORT_SCHEMA_URL }}</div>
+              <div class="flex items-center gap-2">
+                <el-button size="small" @click="formatExportJson">格式化</el-button>
+                <el-button size="small" @click="copyExportJson">复制 JSON</el-button>
+              </div>
+            </div>
+            <el-input
+              v-model="exportJsonText"
+              type="textarea"
+              :rows="18"
+              readonly
+              class="font-mono"
+            />
+          </div>
+          <template #footer>
+            <el-button @click="exportDialogVisible = false">关闭</el-button>
+          </template>
+        </el-dialog>
     </div>
 
     <el-card shadow="never" class="border">
@@ -194,6 +233,53 @@
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="handleSave">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="quickImportVisible"
+      title="快速导入渠道"
+      width="900px"
+      :close-on-click-modal="false"
+    >
+      <div class="space-y-3">
+        <el-alert type="info" :closable="false" show-icon>
+          <template #title>
+            支持一次导入多个渠道；请使用 JSON 且不要包含注释。已内置示例，含 <span class="font-mono">$schema</span> 字段。
+          </template>
+        </el-alert>
+
+        <div class="flex items-center justify-between">
+          <div class="text-xs text-gray-500">Schema: {{ CHANNEL_IMPORT_SCHEMA_URL }}</div>
+          <div class="flex items-center gap-2">
+            <el-button size="small" @click="fillImportExample">填充示例</el-button>
+            <el-button size="small" @click="formatImportJson">格式化 JSON</el-button>
+          </div>
+        </div>
+
+        <el-input
+          v-model="quickImportText"
+          type="textarea"
+          :rows="18"
+          placeholder="粘贴导入 JSON"
+          class="font-mono"
+        />
+
+        <el-collapse>
+          <el-collapse-item title="查看 JSON Schema" name="schema">
+            <el-input
+              :model-value="CHANNEL_IMPORT_SCHEMA_TEXT"
+              type="textarea"
+              :rows="14"
+              readonly
+              class="font-mono"
+            />
+          </el-collapse-item>
+        </el-collapse>
+      </div>
+      <template #footer>
+        <el-button @click="quickImportVisible = false">取消</el-button>
+        <el-button type="primary" :loading="quickImportSaving" @click="submitQuickImport">验证并导入</el-button>
       </template>
     </el-dialog>
 
@@ -419,10 +505,71 @@ const adminStore = useAdminStore()
 const loading = ref(false)
 const saving = ref(false)
 const dialogVisible = ref(false)
+const quickImportVisible = ref(false)
+const quickImportSaving = ref(false)
+const quickImportText = ref('')
 const editingId = ref<number | null>(null)
 const formRef = ref<FormInstance>()
 const currentPage = ref(1)
 const pageSize = ref(20)
+const exportDialogVisible = ref(false)
+const exportJsonText = ref('')
+function openExportDialog() {
+  exportJsonText.value = buildExportJson()
+  exportDialogVisible.value = true
+}
+
+function buildExportJson(): string {
+  // 结构与导入完全一致
+  const channels: Record<string, ImportChannelConfig> = {}
+  for (const ch of adminStore.channels) {
+    const modelRoutes = Array.isArray(ch.modelRoutes) ? ch.modelRoutes : []
+    const models: ImportModelConfig[] = modelRoutes.map((r) => {
+      let config: any = {}
+      try { config = r.config ? JSON.parse(r.config) : {} } catch { config = {} }
+      return {
+        modelId: r.actualModel,
+        alias: r.virtualModel !== r.actualModel ? r.virtualModel : undefined,
+        types: parseRouteTypes(r.types),
+        priority: r.priority,
+        weight: r.weight,
+        enabled: r.enabled,
+        ...config,
+        config,
+      }
+    })
+    channels[ch.name] = {
+      baseURL: ch.baseUrl,
+      apiKey: ch.apiKey ?? '',
+      apiType: ch.provider as ProviderType,
+      models,
+    }
+  }
+  const payload: ChannelImportPayload = {
+    $schema: CHANNEL_IMPORT_SCHEMA_URL,
+    channels,
+  }
+  return JSON.stringify(payload, null, 2)
+}
+
+function formatExportJson() {
+  try {
+    const parsed = JSON.parse(exportJsonText.value)
+    exportJsonText.value = JSON.stringify(parsed, null, 2)
+    ElMessage.success('已格式化')
+  } catch {
+    ElMessage.error('JSON 格式错误，无法格式化')
+  }
+}
+
+async function copyExportJson() {
+  try {
+    await navigator.clipboard.writeText(exportJsonText.value)
+    ElMessage.success('已复制到剪贴板')
+  } catch {
+    ElMessage.error('复制失败')
+  }
+}
 
 // Advanced settings drawer state
 const advancedDrawerVisible = ref(false)
@@ -438,6 +585,130 @@ interface ModelAdvancedConfig {
   contextLength?: number
   customHeaders: { key: string; value: string }[]
 }
+
+type ProviderType = 'openai' | 'anthropic' | 'custom' | 'custom-anthropic'
+
+interface ImportModelConfig {
+  modelId: string
+  alias?: string
+  types?: string[]
+  priority?: number
+  weight?: number
+  enabled?: boolean
+  timeout?: number
+  maxRetries?: number
+  maxTokens?: number
+  contextLength?: number
+  customHeaders?: Record<string, string>
+  config?: {
+    timeout?: number
+    maxRetries?: number
+    maxTokens?: number
+    contextLength?: number
+    customHeaders?: Record<string, string>
+  }
+}
+
+interface ImportChannelConfig {
+  baseURL: string
+  apiKey: string
+  apiType: ProviderType
+  models: ImportModelConfig[]
+}
+
+interface ChannelImportPayload {
+  $schema?: string
+  channels: Record<string, ImportChannelConfig>
+}
+
+const CHANNEL_IMPORT_SCHEMA_URL = 'https://llm-gateway.local/schemas/channel-import.schema.json'
+
+const CHANNEL_IMPORT_SCHEMA: Record<string, unknown> = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  $id: CHANNEL_IMPORT_SCHEMA_URL,
+  title: 'LLM Gateway Channel Import',
+  type: 'object',
+  required: ['channels'],
+  additionalProperties: false,
+  properties: {
+    $schema: { type: 'string' },
+    channels: {
+      type: 'object',
+      minProperties: 1,
+      additionalProperties: {
+        type: 'object',
+        required: ['baseURL', 'apiKey', 'apiType', 'models'],
+        additionalProperties: false,
+        properties: {
+          baseURL: { type: 'string', minLength: 1 },
+          apiKey: { type: 'string', minLength: 1 },
+          apiType: { type: 'string', enum: ['openai', 'anthropic', 'custom', 'custom-anthropic'] },
+          models: {
+            type: 'array',
+            minItems: 1,
+            items: {
+              type: 'object',
+              required: ['modelId'],
+              additionalProperties: true,
+              properties: {
+                modelId: { type: 'string', minLength: 1 },
+                alias: { type: 'string' },
+                types: { type: 'array', items: { type: 'string' } },
+                priority: { type: 'integer', minimum: 1 },
+                weight: { type: 'integer', minimum: 1, maximum: 100 },
+                enabled: { type: 'boolean' },
+                timeout: { type: 'integer', minimum: 1000 },
+                maxRetries: { type: 'integer', minimum: 0, maximum: 5 },
+                maxTokens: { type: 'integer', minimum: 1 },
+                contextLength: { type: 'integer', minimum: 1 },
+                customHeaders: { type: 'object', additionalProperties: { type: 'string' } },
+                config: {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    timeout: { type: 'integer', minimum: 1000 },
+                    maxRetries: { type: 'integer', minimum: 0, maximum: 5 },
+                    maxTokens: { type: 'integer', minimum: 1 },
+                    contextLength: { type: 'integer', minimum: 1 },
+                    customHeaders: { type: 'object', additionalProperties: { type: 'string' } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+}
+
+const CHANNEL_IMPORT_EXAMPLE: ChannelImportPayload = {
+  $schema: CHANNEL_IMPORT_SCHEMA_URL,
+  channels: {
+    'channel-name': {
+      baseURL: 'https://api.example.com/v1',
+      apiKey: 'sk-xxx',
+      apiType: 'openai',
+      models: [
+        {
+          modelId: 'qwen3.6-plus',
+          alias: 'default',
+          types: ['chat', 'function-calling'],
+          priority: 12,
+          weight: 100,
+          enabled: true,
+          contextLength: 196608,
+          maxTokens: 8192,
+          customHeaders: {
+            'X-Provider': 'example',
+          },
+        },
+      ],
+    },
+  },
+}
+
+const CHANNEL_IMPORT_SCHEMA_TEXT = JSON.stringify(CHANNEL_IMPORT_SCHEMA, null, 2)
 
 // Model capability types — with degradation metadata
 // canDegradeTo: which base capability this falls back to when the route doesn't declare it
@@ -650,6 +921,254 @@ function openCreate() {
   editingId.value = null
   resetForm()
   dialogVisible.value = true
+}
+
+function openQuickImport() {
+  quickImportVisible.value = true
+  if (!quickImportText.value.trim()) {
+    quickImportText.value = JSON.stringify(CHANNEL_IMPORT_EXAMPLE, null, 2)
+  }
+}
+
+function fillImportExample() {
+  // 动态生成所有支持的 types
+  const allTypes = MODEL_TYPES.map(t => t.value)
+  const example = JSON.parse(JSON.stringify(CHANNEL_IMPORT_EXAMPLE))
+  if (example.channels && example.channels['channel-name'] && example.channels['channel-name'].models && example.channels['channel-name'].models[0]) {
+    example.channels['channel-name'].models[0].types = allTypes
+  }
+  quickImportText.value = JSON.stringify(example, null, 2)
+}
+
+function formatImportJson() {
+  try {
+    const parsed = JSON.parse(quickImportText.value)
+    quickImportText.value = JSON.stringify(parsed, null, 2)
+    ElMessage.success('JSON 已格式化')
+  } catch {
+    ElMessage.error('JSON 格式错误，无法格式化')
+  }
+}
+
+function parseChannelImportPayload(raw: string): ChannelImportPayload {
+  const parsed = JSON.parse(raw) as unknown
+
+  // Backward-compatible normalization for old array style:
+  // [ { "channel-name": { ... } } ]
+  if (Array.isArray(parsed)) {
+    if (parsed.length !== 1 || !parsed[0] || typeof parsed[0] !== 'object') {
+      throw new Error('数组格式只支持单元素对象：[{"channel-name": {...}}]')
+    }
+    return {
+      $schema: CHANNEL_IMPORT_SCHEMA_URL,
+      channels: parsed[0] as Record<string, ImportChannelConfig>,
+    }
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('顶层必须是对象')
+  }
+
+  return parsed as ChannelImportPayload
+}
+
+function validateChannelImportPayload(payload: ChannelImportPayload): string[] {
+  const errors: string[] = []
+
+  if (!payload.channels || typeof payload.channels !== 'object' || Array.isArray(payload.channels)) {
+    errors.push('channels 必须是对象，格式为 {"渠道名": {...}}')
+    return errors
+  }
+
+  const providers = new Set<ProviderType>(['openai', 'anthropic', 'custom', 'custom-anthropic'])
+
+  for (const [channelName, channel] of Object.entries(payload.channels)) {
+    const prefix = `channels.${channelName}`
+    if (!channelName.trim()) {
+      errors.push('渠道名不能为空')
+      continue
+    }
+    if (!channel || typeof channel !== 'object' || Array.isArray(channel)) {
+      errors.push(`${prefix} 必须是对象`)
+      continue
+    }
+
+    if (typeof channel.baseURL !== 'string' || !channel.baseURL.trim()) {
+      errors.push(`${prefix}.baseURL 必须是非空字符串`)
+    }
+    if (typeof channel.apiKey !== 'string' || !channel.apiKey.trim()) {
+      errors.push(`${prefix}.apiKey 必须是非空字符串`)
+    }
+    if (!providers.has(channel.apiType)) {
+      errors.push(`${prefix}.apiType 必须是 openai/anthropic/custom/custom-anthropic 之一`)
+    }
+    if (!Array.isArray(channel.models) || channel.models.length === 0) {
+      errors.push(`${prefix}.models 必须是非空数组`)
+      continue
+    }
+
+    channel.models.forEach((model, idx) => {
+      const modelPrefix = `${prefix}.models[${idx}]`
+      if (!model || typeof model !== 'object' || Array.isArray(model)) {
+        errors.push(`${modelPrefix} 必须是对象`)
+        return
+      }
+      if (typeof model.modelId !== 'string' || !model.modelId.trim()) {
+        errors.push(`${modelPrefix}.modelId 必须是非空字符串`)
+      }
+      if (model.types !== undefined && (!Array.isArray(model.types) || model.types.some((t) => typeof t !== 'string'))) {
+        errors.push(`${modelPrefix}.types 必须是字符串数组`)
+      }
+      if (model.priority !== undefined && (!Number.isInteger(model.priority) || model.priority < 1)) {
+        errors.push(`${modelPrefix}.priority 必须是 >= 1 的整数`)
+      }
+      if (model.weight !== undefined && (!Number.isInteger(model.weight) || model.weight < 1 || model.weight > 100)) {
+        errors.push(`${modelPrefix}.weight 必须是 1-100 的整数`)
+      }
+      if (model.enabled !== undefined && typeof model.enabled !== 'boolean') {
+        errors.push(`${modelPrefix}.enabled 必须是布尔值`)
+      }
+
+      const mergedConfig = {
+        ...(model.config ?? {}),
+        ...(model.timeout !== undefined ? { timeout: model.timeout } : {}),
+        ...(model.maxRetries !== undefined ? { maxRetries: model.maxRetries } : {}),
+        ...(model.maxTokens !== undefined ? { maxTokens: model.maxTokens } : {}),
+        ...(model.contextLength !== undefined ? { contextLength: model.contextLength } : {}),
+      }
+
+      if (mergedConfig.timeout !== undefined && (!Number.isInteger(mergedConfig.timeout) || mergedConfig.timeout < 1000)) {
+        errors.push(`${modelPrefix}.timeout 必须是 >= 1000 的整数`)
+      }
+      if (mergedConfig.maxRetries !== undefined && (!Number.isInteger(mergedConfig.maxRetries) || mergedConfig.maxRetries < 0 || mergedConfig.maxRetries > 5)) {
+        errors.push(`${modelPrefix}.maxRetries 必须是 0-5 的整数`)
+      }
+      if (mergedConfig.maxTokens !== undefined && (!Number.isInteger(mergedConfig.maxTokens) || mergedConfig.maxTokens < 1)) {
+        errors.push(`${modelPrefix}.maxTokens 必须是 >= 1 的整数`)
+      }
+      if (mergedConfig.contextLength !== undefined && (!Number.isInteger(mergedConfig.contextLength) || mergedConfig.contextLength < 1)) {
+        errors.push(`${modelPrefix}.contextLength 必须是 >= 1 的整数`)
+      }
+
+      const headers = model.customHeaders ?? model.config?.customHeaders
+      if (headers !== undefined) {
+        if (!headers || typeof headers !== 'object' || Array.isArray(headers)) {
+          errors.push(`${modelPrefix}.customHeaders 必须是对象`)
+        } else {
+          for (const [k, v] of Object.entries(headers)) {
+            if (!k.trim()) errors.push(`${modelPrefix}.customHeaders 含空键名`)
+            if (typeof v !== 'string') errors.push(`${modelPrefix}.customHeaders.${k} 必须是字符串`) 
+          }
+        }
+      }
+    })
+  }
+
+  return errors
+}
+
+async function submitQuickImport() {
+  let payload: ChannelImportPayload
+  try {
+    payload = parseChannelImportPayload(quickImportText.value)
+  } catch (err) {
+    ElMessage.error(`JSON 解析失败：${(err as Error).message}`)
+    return
+  }
+
+  const errors = validateChannelImportPayload(payload)
+  if (errors.length > 0) {
+    ElMessage.error(`JSON 校验失败：${errors[0]}`)
+    return
+  }
+
+  quickImportSaving.value = true
+  const failed: string[] = []
+  let successCount = 0
+
+  try {
+    for (const [channelName, channel] of Object.entries(payload.channels)) {
+      const models = channel.models.map((m) => m.modelId.trim()).filter(Boolean)
+      const modelAliases: Record<string, string> = {}
+      const modelTypes: Record<string, string[]> = {}
+      const modelAdvanced: Record<string, { priority?: number; weight?: number; enabled?: boolean; config?: Record<string, unknown> }> = {}
+
+      for (const model of channel.models) {
+        const modelId = model.modelId.trim()
+        if (!modelId) continue
+        if (model.alias?.trim()) modelAliases[modelId] = model.alias.trim()
+        if (Array.isArray(model.types) && model.types.length > 0) {
+          modelTypes[modelId] = model.types
+        }
+
+        const rawHeaders = model.customHeaders ?? model.config?.customHeaders
+        const customHeaders: Record<string, string> = {}
+        if (rawHeaders && typeof rawHeaders === 'object' && !Array.isArray(rawHeaders)) {
+          for (const [k, v] of Object.entries(rawHeaders)) {
+            if (k.trim() && typeof v === 'string') customHeaders[k.trim()] = v
+          }
+        }
+
+        const mergedConfig: Record<string, unknown> = {}
+        const timeout = model.timeout ?? model.config?.timeout
+        const maxRetries = model.maxRetries ?? model.config?.maxRetries
+        const maxTokens = model.maxTokens ?? model.config?.maxTokens
+        const contextLength = model.contextLength ?? model.config?.contextLength
+        if (timeout !== undefined) mergedConfig.timeout = timeout
+        if (maxRetries !== undefined) mergedConfig.maxRetries = maxRetries
+        if (maxTokens !== undefined) mergedConfig.maxTokens = maxTokens
+        if (contextLength !== undefined) mergedConfig.contextLength = contextLength
+        if (Object.keys(customHeaders).length > 0) mergedConfig.customHeaders = customHeaders
+
+        if (
+          model.priority !== undefined ||
+          model.weight !== undefined ||
+          model.enabled !== undefined ||
+          Object.keys(mergedConfig).length > 0
+        ) {
+          modelAdvanced[modelId] = {
+            ...(model.priority !== undefined ? { priority: model.priority } : {}),
+            ...(model.weight !== undefined ? { weight: model.weight } : {}),
+            ...(model.enabled !== undefined ? { enabled: model.enabled } : {}),
+            config: mergedConfig,
+          }
+        }
+      }
+
+      try {
+        await client.post('/admin/channels', {
+          name: channelName,
+          baseUrl: channel.baseURL,
+          apiKey: channel.apiKey,
+          provider: channel.apiType,
+          models,
+          modelAliases,
+          modelTypes,
+          modelAdvanced,
+        })
+        successCount += 1
+      } catch (err) {
+        const e = err as { response?: { data?: { error?: string } } }
+        failed.push(`${channelName}: ${e.response?.data?.error ?? '导入失败'}`)
+      }
+    }
+
+    await adminStore.fetchChannels()
+
+    if (successCount > 0 && failed.length === 0) {
+      quickImportVisible.value = false
+      ElMessage.success(`导入成功，共 ${successCount} 个渠道`)
+      return
+    }
+
+    if (successCount > 0) {
+      ElMessage.warning(`部分成功：成功 ${successCount} 个，失败 ${failed.length} 个；首个错误：${failed[0]}`)
+    } else {
+      ElMessage.error(`导入失败：${failed[0] ?? '未知错误'}`)
+    }
+  } finally {
+    quickImportSaving.value = false
+  }
 }
 
 function openEdit(channel: Channel) {

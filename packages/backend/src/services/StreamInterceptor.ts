@@ -15,6 +15,11 @@ interface ResponsesFunctionCallState {
   outputIndex: number
 }
 
+interface OpenAIChunkFromResponses {
+  chunk?: Record<string, unknown>
+  done?: boolean
+}
+
 /**
  * Intercepts SSE (Server-Sent Events) stream, parses content deltas,
  * optionally converts between OpenAI ↔ Anthropic formats,
@@ -36,6 +41,9 @@ export class StreamInterceptor extends EventEmitter {
   private sseMirrorTag: string = ''
   private sseMirrorSeen: number = 0
   private sseMirrorCappedLogged: boolean = false
+  private streamFormatDebug: boolean = false
+  private streamFormatTag: string = ''
+  private streamFormatLogged: boolean = false
 
   /** Accumulated full assistant response content */
   public fullContent: string = ''
@@ -50,6 +58,8 @@ export class StreamInterceptor extends EventEmitter {
       sseMirrorDebug?: boolean
       sseMirrorMaxLines?: number
       sseMirrorTag?: string
+      streamFormatDebug?: boolean
+      streamFormatTag?: string
     }
   ): Transform {
     this.responsesStreamStarted = false
@@ -66,6 +76,9 @@ export class StreamInterceptor extends EventEmitter {
     this.sseMirrorTag = options?.sseMirrorTag ?? ''
     this.sseMirrorSeen = 0
     this.sseMirrorCappedLogged = false
+    this.streamFormatDebug = options?.streamFormatDebug === true
+    this.streamFormatTag = options?.streamFormatTag ?? ''
+    this.streamFormatLogged = false
 
     return new Transform({
       transform: (chunk: Buffer, _encoding, callback) => {
@@ -89,7 +102,7 @@ export class StreamInterceptor extends EventEmitter {
         }
 
         // Pass through transformed bytes
-        const outText = output.join('\n') + (output.length > 0 ? '\n' : '')
+        const outText = output.join('')
         this.mirrorSseOutput(outText)
         callback(null, Buffer.from(outText))
       },
@@ -105,18 +118,18 @@ export class StreamInterceptor extends EventEmitter {
             targetFormat
           )
           if (transformed) {
-            flushOutput += transformed + '\n'
+            flushOutput += transformed
           }
           this.lineBuffer = ''
         }
 
         // Flush any pending event
         const finalFlush = this.flushCurrentEventAndReturn(upstreamFormat, targetFormat)
-        if (finalFlush) flushOutput += finalFlush + '\n'
+        if (finalFlush) flushOutput += finalFlush
 
         if (targetFormat === 'openai-responses') {
           const completion = this.buildResponsesCompletionEvents()
-          if (completion) flushOutput += completion + '\n'
+          if (completion) flushOutput += completion
         }
 
         this.emit('done', {
@@ -176,15 +189,32 @@ export class StreamInterceptor extends EventEmitter {
     this.currentEventType = 'message'
 
     if (rawData === '[DONE]') {
-      return targetFormat === 'openai-responses' ? '' : 'data: [DONE]'
+      return targetFormat === 'openai-responses' ? '' : 'data: [DONE]\n\n'
     }
 
     try {
       const parsed = JSON.parse(rawData)
+      this.detectAndLogStreamDialect(parsed)
       this.extractContent(parsed, upstreamFormat)
 
       if (targetFormat === 'openai-responses') {
         return this.convertToResponsesEvents(parsed, upstreamFormat)
+      }
+
+      // Some "OpenAI-compatible" providers stream Responses-style events
+      // on /chat/completions. Convert those events back to chat chunks.
+      if (targetFormat === 'openai') {
+        const fromResponses = this.convertResponsesEventToOpenAIChunk(parsed)
+        if (fromResponses) {
+          const output: string[] = []
+          if (fromResponses.chunk && Object.keys(fromResponses.chunk).length > 0) {
+            output.push(`data: ${JSON.stringify(fromResponses.chunk)}\n\n`)
+          }
+          if (fromResponses.done) {
+            output.push('data: [DONE]\n\n')
+          }
+          return output.join('')
+        }
       }
 
       // Convert format if needed
@@ -205,11 +235,95 @@ export class StreamInterceptor extends EventEmitter {
         output.push(`event: ${eventType}`)
       }
       output.push(`data: ${JSON.stringify(convertedData)}`)
-      return output.join('\n')
+      return `${output.join('\n')}\n\n`
     } catch {
       // Not valid JSON, skip
       return ''
     }
+  }
+
+  private detectAndLogStreamDialect(parsed: Record<string, unknown>): void {
+    if (!this.streamFormatDebug || this.streamFormatLogged) return
+
+    const eventType = typeof parsed.type === 'string' ? parsed.type : ''
+    let dialect: string | null = null
+
+    if (eventType.startsWith('response.')) {
+      dialect = 'openai-responses-events'
+    } else if (Array.isArray(parsed.choices)) {
+      dialect = 'openai-chat-chunk'
+    } else if (
+      eventType.startsWith('message_') ||
+      eventType.startsWith('content_block_')
+    ) {
+      dialect = 'anthropic-events'
+    }
+
+    if (!dialect) return
+
+    this.streamFormatLogged = true
+    logger.info(
+      `[StreamFormat] ${this.streamFormatTag || '-'} detected=${dialect}`
+    )
+  }
+
+  private convertResponsesEventToOpenAIChunk(data: Record<string, unknown>): OpenAIChunkFromResponses | null {
+    const type = typeof data.type === 'string' ? data.type : ''
+    if (!type.startsWith('response.')) return null
+
+    if (type === 'response.output_text.delta') {
+      const delta = typeof data.delta === 'string' ? data.delta : ''
+      if (!delta) return { chunk: {} }
+      return {
+        chunk: {
+          choices: [
+            {
+              index: 0,
+              delta: { content: delta },
+            },
+          ],
+        },
+      }
+    }
+
+    if (type === 'response.completed') {
+      const response = (data.response && typeof data.response === 'object')
+        ? (data.response as Record<string, unknown>)
+        : undefined
+      const usage = (response?.usage && typeof response.usage === 'object')
+        ? (response.usage as Record<string, unknown>)
+        : undefined
+
+      const chunk: Record<string, unknown> = {
+        choices: [
+          {
+            index: 0,
+            delta: {},
+            finish_reason: 'stop',
+          },
+        ],
+      }
+
+      if (typeof response?.id === 'string') chunk.id = response.id
+      if (typeof response?.model === 'string') chunk.model = response.model
+      if (typeof response?.created_at === 'number') chunk.created = response.created_at
+
+      if (usage) {
+        chunk.usage = {
+          prompt_tokens: typeof usage.input_tokens === 'number' ? usage.input_tokens : 0,
+          completion_tokens: typeof usage.output_tokens === 'number' ? usage.output_tokens : 0,
+          total_tokens: typeof usage.total_tokens === 'number'
+            ? usage.total_tokens
+            : ((typeof usage.input_tokens === 'number' ? usage.input_tokens : 0) +
+               (typeof usage.output_tokens === 'number' ? usage.output_tokens : 0)),
+        }
+      }
+
+      return { chunk, done: true }
+    }
+
+    // Other responses events are metadata for openai-chat clients; ignore.
+    return { chunk: {} }
   }
 
   /**
@@ -607,6 +721,13 @@ export class StreamInterceptor extends EventEmitter {
       if (choices && choices[0]?.delta?.content) {
         this.fullContent += choices[0].delta.content
       }
+
+      // Also accept OpenAI Responses stream event payloads from some providers.
+      const responseType = typeof data.type === 'string' ? data.type : ''
+      if (responseType === 'response.output_text.delta' && typeof data.delta === 'string') {
+        this.fullContent += data.delta
+      }
+
       // OpenAI usage (only in last chunk when stream_options.include_usage=true)
       const usage = data.usage as
         | { prompt_tokens?: number; completion_tokens?: number }
@@ -615,6 +736,23 @@ export class StreamInterceptor extends EventEmitter {
         if (usage.prompt_tokens != null) this.promptTokens = usage.prompt_tokens
         if (usage.completion_tokens != null)
           this.completionTokens = usage.completion_tokens
+      }
+
+      if (responseType === 'response.completed') {
+        const response = (data.response && typeof data.response === 'object')
+          ? (data.response as Record<string, unknown>)
+          : undefined
+        const responseUsage = (response?.usage && typeof response.usage === 'object')
+          ? (response.usage as Record<string, unknown>)
+          : undefined
+        if (responseUsage) {
+          if (typeof responseUsage.input_tokens === 'number') {
+            this.promptTokens = responseUsage.input_tokens
+          }
+          if (typeof responseUsage.output_tokens === 'number') {
+            this.completionTokens = responseUsage.output_tokens
+          }
+        }
       }
     } else if (provider === 'anthropic') {
       // Anthropic streaming delta format

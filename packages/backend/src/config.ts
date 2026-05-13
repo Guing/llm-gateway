@@ -14,4 +14,6 @@ export const config = {
   sseMirrorDebug: process.env.SSE_MIRROR_DEBUG === 'true',
   // Max number of mirrored data lines per request (default 20).
   sseMirrorMaxLines: Math.max(1, parseInt(process.env.SSE_MIRROR_MAX_LINES || '20', 10) || 20),
+  // Set STREAM_FORMAT_DEBUG=true to log detected upstream stream event format once per request.
+  streamFormatDebug: process.env.STREAM_FORMAT_DEBUG === 'true',
 }

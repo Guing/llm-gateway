@@ -26,6 +26,9 @@ RUN pnpm install --frozen-lockfile --filter backend --ignore-scripts
 
 COPY packages/backend ./packages/backend
 
+# Generate Prisma client types (--no-engine skips native binary download, safe on arm64/QEMU)
+RUN cd packages/backend && npx prisma generate --no-engine
+
 # Compile TypeScript to JavaScript
 RUN pnpm --filter backend build
 

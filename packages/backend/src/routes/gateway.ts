@@ -120,6 +120,85 @@ function responsesInputToMessages(input: unknown): Array<Record<string, unknown>
   return messages
 }
 
+function inferDefaultToolName(tools: unknown): string {
+  if (!Array.isArray(tools)) return 'tool'
+  for (const t of tools as Array<Record<string, unknown>>) {
+    if (!t || typeof t !== 'object') continue
+    if (typeof t.name === 'string' && t.name) return t.name
+    if (t.function && typeof t.function === 'object') {
+      const fn = t.function as Record<string, unknown>
+      if (typeof fn.name === 'string' && fn.name) return fn.name
+    }
+  }
+  return 'tool'
+}
+
+function normalizeToolConversation(
+  messages: Array<Record<string, unknown>>,
+  tools: unknown
+): Array<Record<string, unknown>> {
+  const defaultToolName = inferDefaultToolName(tools)
+  let immediateAssistantCallIds = new Set<string>()
+  let injectedAssistantCalls = 0
+
+  const normalized: Array<Record<string, unknown>> = []
+  for (const msg of messages) {
+    if (msg.role === 'assistant' && Array.isArray(msg.tool_calls)) {
+      const ids = (msg.tool_calls as Array<Record<string, unknown>>)
+        .map((tc) => (typeof tc?.id === 'string' ? tc.id : ''))
+        .filter((id) => id.length > 0)
+      immediateAssistantCallIds = new Set(ids)
+      normalized.push(msg)
+      continue
+    }
+
+    if (msg.role !== 'tool') {
+      immediateAssistantCallIds = new Set()
+      normalized.push(msg)
+      continue
+    }
+
+    const callId = typeof msg.tool_call_id === 'string'
+      ? msg.tool_call_id
+      : (typeof msg.call_id === 'string' ? msg.call_id : '')
+    if (!callId) {
+      // Invalid tool message for OpenAI chat format; drop to avoid upstream validation failure.
+      continue
+    }
+
+    // Many OpenAI-compatible providers require the *immediately previous assistant*
+    // message to contain a matching tool_call entry, not just "somewhere in history".
+    if (!immediateAssistantCallIds.has(callId)) {
+      const hintedName = typeof msg.name === 'string' && msg.name ? msg.name : defaultToolName
+      normalized.push({
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: callId,
+            type: 'function',
+            function: {
+              name: hintedName,
+              arguments: '{}',
+            },
+          },
+        ],
+      })
+      immediateAssistantCallIds = new Set([callId])
+      injectedAssistantCalls += 1
+    }
+
+    normalized.push(msg)
+    immediateAssistantCallIds.delete(callId)
+  }
+
+  if (injectedAssistantCalls > 0) {
+    logger.verbose(`[Gateway] injected synthetic assistant tool_calls=${injectedAssistantCalls}`)
+  }
+
+  return normalized
+}
+
 function mapResponsesRequestToOpenAI(body: Record<string, unknown>): Record<string, unknown> {
   const mapped = { ...body }
   const instructions = typeof body.instructions === 'string' ? body.instructions : undefined
@@ -134,7 +213,17 @@ function mapResponsesRequestToOpenAI(body: Record<string, unknown>): Record<stri
   messages.push(...inputMessages)
 
   if (messages.length > 0) {
-    mapped.messages = messages
+    const normalizedMessages = normalizeToolConversation(messages, body.tools)
+    mapped.messages = normalizedMessages
+
+    const toolMsgCount = normalizedMessages.filter((m) => m.role === 'tool').length
+    const assistantToolCallCount = normalizedMessages
+      .filter((m) => m.role === 'assistant' && Array.isArray(m.tool_calls))
+      .reduce((sum, m) => sum + (m.tool_calls as Array<unknown>).length, 0)
+    logger.verbose(
+      `[Gateway] responses->openai normalized messages=${normalizedMessages.length}` +
+      ` tool_msgs=${toolMsgCount} assistant_tool_calls=${assistantToolCallCount}`
+    )
   }
   if (typeof body.max_output_tokens === 'number') {
     mapped.max_tokens = body.max_output_tokens
@@ -526,6 +615,8 @@ async function handleStreaming(
       sseMirrorDebug: config.sseMirrorDebug,
       sseMirrorMaxLines: config.sseMirrorMaxLines,
       sseMirrorTag: `${virtualModel} -> ${route.channelName}/${route.actualModel}`,
+      streamFormatDebug: config.streamFormatDebug,
+      streamFormatTag: `${virtualModel} -> ${route.channelName}/${route.actualModel}`,
     })
 
     // When streaming completes, save the full log

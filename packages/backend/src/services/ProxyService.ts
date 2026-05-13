@@ -232,6 +232,33 @@ function sanitizeRequestForRoute(
 ): Record<string, unknown> {
   const b = { ...body }
 
+  // Some OpenAI-compatible providers reject explicit null for structured fields.
+  // Normalize reasoning/thinking by removing null keys and dropping empty objects.
+  if (format === 'openai') {
+    const normalizeNullableObjectField = (key: 'reasoning' | 'thinking') => {
+      const value = b[key]
+      if (value == null) {
+        delete b[key]
+        return
+      }
+
+      if (typeof value !== 'object' || Array.isArray(value)) return
+
+      const normalized = Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).filter(([, v]) => v != null)
+      )
+
+      if (Object.keys(normalized).length === 0) {
+        delete b[key]
+      } else {
+        b[key] = normalized
+      }
+    }
+
+    normalizeNullableObjectField('reasoning')
+    normalizeNullableObjectField('thinking')
+  }
+
   // ── Matrix-driven flat param stripping ─────────────────────────────────────
   for (const [capability, rule] of Object.entries(CAPABILITY_DEGRADATION_MATRIX)) {
     if (types.includes(capability)) continue          // route declares this capability — keep params
@@ -316,6 +343,111 @@ function sanitizeRequestForRoute(
   return b
 }
 
+// ---------------------------------------------------------------------------
+// Context-length truncation
+// ---------------------------------------------------------------------------
+
+/**
+ * Rough token count estimate based on JSON-serialised byte length.
+ * ~3 UTF-8 characters per token is a conservative heuristic that avoids
+ * over-truncation for English text and code.
+ */
+function estimateTokens(obj: unknown): number {
+  try {
+    return Math.ceil(JSON.stringify(obj).length / 3)
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * Group consecutive non-system messages into atomic units that must be
+ * kept or dropped together.  An "atomic group" is:
+ *   - An assistant message with tool_calls, plus all immediately-following
+ *     tool messages whose tool_call_id matches one of those call IDs.
+ *   - Any other single message.
+ *
+ * System messages are excluded from the input and handled separately.
+ */
+function buildMessageGroups(
+  nonSystemMessages: Array<Record<string, unknown>>
+): Array<Array<Record<string, unknown>>> {
+  const groups: Array<Array<Record<string, unknown>>> = []
+  let i = 0
+  while (i < nonSystemMessages.length) {
+    const msg = nonSystemMessages[i]
+    if (
+      msg.role === 'assistant' &&
+      Array.isArray(msg.tool_calls) &&
+      (msg.tool_calls as unknown[]).length > 0
+    ) {
+      const callIds = new Set(
+        (msg.tool_calls as Array<Record<string, unknown>>)
+          .map((tc) => tc.id)
+          .filter((id) => typeof id === 'string' && id.length > 0) as string[]
+      )
+      const group: Array<Record<string, unknown>> = [msg]
+      i++
+      // Absorb all immediately-following tool messages that match a call ID.
+      while (i < nonSystemMessages.length && nonSystemMessages[i].role === 'tool') {
+        const toolMsg = nonSystemMessages[i]
+        const toolCallId = typeof toolMsg.tool_call_id === 'string' ? toolMsg.tool_call_id : ''
+        if (callIds.has(toolCallId)) {
+          group.push(toolMsg)
+          callIds.delete(toolCallId)
+          i++
+        } else {
+          break
+        }
+      }
+      groups.push(group)
+    } else {
+      groups.push([msg])
+      i++
+    }
+  }
+  return groups
+}
+
+/**
+ * Truncate messages so that the estimated token count of the resulting
+ * messages array fits within `contextLength * safetyFactor` tokens.
+ *
+ * Oldest non-system messages are dropped first, always in atomic groups
+ * (assistant+tool_calls pairs are never separated).
+ *
+ * System messages are always preserved.
+ */
+function truncateMessagesForContextLimit(
+  messages: Array<Record<string, unknown>>,
+  contextLength: number
+): Array<Record<string, unknown>> {
+  // Reserve 15 % for the completion and system-overhead. Never go above that.
+  const tokenLimit = Math.floor(contextLength * 0.85)
+  if (estimateTokens(messages) <= tokenLimit) return messages
+
+  const systemMsgs = messages.filter((m) => m.role === 'system')
+  const nonSystemMsgs = messages.filter((m) => m.role !== 'system')
+  const groups = buildMessageGroups(nonSystemMsgs)
+
+  // Drop oldest groups from the front until we fit.
+  let dropped = 0
+  while (groups.length > 0) {
+    const candidate = [...systemMsgs, ...groups.flatMap((g) => g)]
+    if (estimateTokens(candidate) <= tokenLimit) break
+    dropped += groups.shift()!.length
+  }
+
+  const result = [...systemMsgs, ...groups.flatMap((g) => g)]
+  if (dropped > 0) {
+    logger.info(
+      `[Proxy] Context truncation: dropped ${dropped} messages ` +
+      `(contextLength=${contextLength}, est=${estimateTokens(result)} tokens)`
+    )
+  }
+  return result
+}
+
 /**
  * Forward a request to an upstream channel, handling format conversion.
  *
@@ -355,6 +487,15 @@ export async function proxyRequest(
     route.types,
     upstreamFormat
   ) as typeof upstreamBody
+
+  // Proactively truncate messages when a contextLength limit is configured for this route.
+  if (route.config.contextLength && Array.isArray((upstreamBody as Record<string, unknown>).messages)) {
+    const bodyAny = upstreamBody as Record<string, unknown>
+    bodyAny.messages = truncateMessagesForContextLimit(
+      bodyAny.messages as Array<Record<string, unknown>>,
+      route.config.contextLength
+    )
+  }
 
   // Build headers
   const headers: Record<string, string> = {
