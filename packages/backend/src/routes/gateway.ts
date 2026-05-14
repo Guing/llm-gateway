@@ -588,7 +588,10 @@ async function handleStreaming(
 
   try {
     const expectedProxyFormat: 'openai' | 'anthropic' = incomingFormat === 'anthropic' ? 'anthropic' : 'openai'
-    const { result: { upstreamResponse, probedBody }, route } = await executeWithFallback(
+    const streamTargetFormat: 'openai' | 'anthropic' | 'openai-responses' =
+      incomingFormat === 'openai-responses' ? 'openai-responses' : expectedProxyFormat
+
+    const { result: { upstreamResponse, clientReadyBody, interceptor }, route } = await executeWithFallback(
       routes,
       async (r) => {
         const resp = await proxyRequest(r, body as never, expectedProxyFormat)
@@ -598,26 +601,35 @@ async function handleStreaming(
         // throws and executeWithFallback will fall back to the next route transparently.
         // Note: a premature close that happens AFTER data has already been sent to the client
         // (mid-stream) cannot be retried — the client has already received partial output.
-        const probed = await probeStream(resp.body as NodeJS.ReadableStream, STREAM_PROBE_TIMEOUT_MS)
-        return { upstreamResponse: resp, probedBody: probed }
+        const upstreamProbed = await probeStream(resp.body as NodeJS.ReadableStream, STREAM_PROBE_TIMEOUT_MS)
+        const upstreamFormat = r.provider === 'anthropic' ? 'anthropic' : 'openai'
+        const candidateInterceptor = new StreamInterceptor()
+        const transform = candidateInterceptor.createTransform(upstreamFormat, streamTargetFormat, {
+          responseModel: virtualModel,
+          sseMirrorDebug: config.sseMirrorDebug,
+          sseMirrorMaxLines: config.sseMirrorMaxLines,
+          sseMirrorTag: `${virtualModel} -> ${r.channelName}/${r.actualModel}`,
+          streamFormatDebug: config.streamFormatDebug,
+          streamFormatTag: `${virtualModel} -> ${r.channelName}/${r.actualModel}`,
+        })
+
+        ;(upstreamProbed as import('stream').Readable).pipe(transform)
+
+        try {
+          // Only commit the route after the transformed stream yields the first
+          // client-visible chunk. This allows fallback when the upstream closes
+          // after raw bytes arrive but before a complete outbound SSE event exists.
+          const transformedProbed = await probeStream(transform as unknown as NodeJS.ReadableStream, STREAM_PROBE_TIMEOUT_MS)
+          return { upstreamResponse: resp, clientReadyBody: transformedProbed, interceptor: candidateInterceptor }
+        } catch (err) {
+          ;(upstreamProbed as import('stream').Readable).unpipe(transform)
+          ;(upstreamProbed as import('stream').Readable).destroy(err as Error)
+          transform.destroy(err as Error)
+          throw err
+        }
       }
     )
     selectedRoute = route
-
-    const upstreamFormat = route.provider === 'anthropic' ? 'anthropic' : 'openai'
-    const interceptor = new StreamInterceptor()
-    const streamTargetFormat: 'openai' | 'anthropic' | 'openai-responses' =
-      incomingFormat === 'openai-responses' ? 'openai-responses' : expectedProxyFormat
-
-    // Create transform with format conversion support
-    const transform = interceptor.createTransform(upstreamFormat, streamTargetFormat, {
-      responseModel: virtualModel,
-      sseMirrorDebug: config.sseMirrorDebug,
-      sseMirrorMaxLines: config.sseMirrorMaxLines,
-      sseMirrorTag: `${virtualModel} -> ${route.channelName}/${route.actualModel}`,
-      streamFormatDebug: config.streamFormatDebug,
-      streamFormatTag: `${virtualModel} -> ${route.channelName}/${route.actualModel}`,
-    })
 
     // When streaming completes, save the full log
     interceptor.once('done', async (data: { fullContent: string; promptTokens?: number; completionTokens?: number }) => {
@@ -720,8 +732,7 @@ async function handleStreaming(
     // pipeline() propagates errors through all streams and guarantees cleanup,
     // unlike .pipe() which silently stalls when the destination is destroyed.
     pipeline(
-      probedBody,
-      transform,
+      clientReadyBody,
       res,
       async (pipelineErr) => {
         if (!pipelineErr || streamCompleted) return
