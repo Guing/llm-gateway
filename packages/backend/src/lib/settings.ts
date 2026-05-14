@@ -10,6 +10,8 @@ import path from 'path'
 export interface GatewaySettings {
   /** When true, ANY upstream error (not just retriable ones) triggers fallback */
   fallbackOnAnyError: boolean
+  /** When true, overlong contexts are truncated before sending upstream */
+  fallbackTruncateOnContextExceeded: boolean
   /** Base penalty duration (ms) for the first consecutive route failure */
   fallbackPenaltyBaseMs: number
   /** Maximum penalty duration (ms) for exponential backoff */
@@ -20,6 +22,7 @@ export interface GatewaySettings {
 
 const DEFAULTS: GatewaySettings = {
   fallbackOnAnyError: false,
+  fallbackTruncateOnContextExceeded: false,
   fallbackPenaltyBaseMs: 30_000,
   fallbackPenaltyMaxMs: 5 * 60_000,
   fallbackPenaltyWeightRatio: 0.2,

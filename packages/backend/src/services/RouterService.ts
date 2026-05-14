@@ -194,6 +194,7 @@ export async function executeWithFallback<T>(
   const sortedPriorities = [...tiers.keys()].sort((a, b) => b - a)
 
   let lastError: Error = new Error('Unknown error')
+  const settings = getSettings()
 
   for (const priority of sortedPriorities) {
     const tier = tiers.get(priority)!
@@ -215,7 +216,7 @@ export async function executeWithFallback<T>(
 
           // Only fallback/retry on retriable errors
           const isRetriable =
-            getSettings().fallbackOnAnyError ||
+            settings.fallbackOnAnyError ||
             message.includes('429') ||
             message.includes('rate limit') ||
             message.includes('timeout') ||
@@ -231,14 +232,16 @@ export async function executeWithFallback<T>(
             message.includes('engine is not available') ||
             message.includes('failed_precondition') ||
             // Context length exceeded — fall back to a route with a larger context window
-            message.includes('context_length_exceeded') ||
-            message.includes('context length') ||
-            message.includes('maximum context') ||
-            (message.includes('max_tokens') && message.includes('exceed')) ||
-            message.includes('tokens exceed') ||
-            (message.includes('too long') && (message.includes('token') || message.includes('context'))) ||
-            message.includes('input is too long') ||
-            message.includes('prompt is too long') ||
+            (settings.fallbackTruncateOnContextExceeded && (
+              message.includes('context_length_exceeded') ||
+              message.includes('context length') ||
+              message.includes('maximum context') ||
+              (message.includes('max_tokens') && message.includes('exceed')) ||
+              message.includes('tokens exceed') ||
+              (message.includes('too long') && (message.includes('token') || message.includes('context'))) ||
+              message.includes('input is too long') ||
+              message.includes('prompt is too long')
+            )) ||
             // Capability rejected at runtime — fall back to a route that supports it
             // (vision / function-calling / reasoning — driven by CAPABILITY_DEGRADATION_MATRIX)
             isCapabilityRejectionError(message)

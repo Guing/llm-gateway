@@ -2,6 +2,7 @@ import fetch, { Response } from 'node-fetch'
 import { RouteCandidate } from './RouterService'
 import { logger } from '../lib/logger'
 import { CAPABILITY_DEGRADATION_MATRIX } from '../lib/capabilities'
+import { getSettings } from '../lib/settings'
 
 export interface OpenAIMessage {
   role: 'system' | 'user' | 'assistant'
@@ -489,7 +490,11 @@ export async function proxyRequest(
   ) as typeof upstreamBody
 
   // Proactively truncate messages when a contextLength limit is configured for this route.
-  if (route.config.contextLength && Array.isArray((upstreamBody as Record<string, unknown>).messages)) {
+  if (
+    getSettings().fallbackTruncateOnContextExceeded &&
+    route.config.contextLength &&
+    Array.isArray((upstreamBody as Record<string, unknown>).messages)
+  ) {
     const bodyAny = upstreamBody as Record<string, unknown>
     bodyAny.messages = truncateMessagesForContextLimit(
       bodyAny.messages as Array<Record<string, unknown>>,

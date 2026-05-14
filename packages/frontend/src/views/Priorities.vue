@@ -53,6 +53,19 @@
           />
         </div>
 
+        <div class="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+          <div>
+            <div class="font-medium text-gray-800">上下文超限时自动截断</div>
+            <div class="text-xs text-gray-500 mt-1">关闭时，超长上下文直接透传上游错误；开启后会在代理层预先截断再请求上游</div>
+          </div>
+          <el-switch
+            v-model="fallbackTruncateOnContextExceeded"
+            :loading="settingsLoading"
+            active-text="开启"
+            inactive-text="关闭"
+          />
+        </div>
+
         <div>
           <div class="text-sm font-medium text-gray-700 mb-3">Fallback 惩罚参数</div>
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -223,6 +236,7 @@ const settingsLoading = ref(false)
 const healthLoading = ref(false)
 const fallbackDialogVisible = ref(false)
 const fallbackOnAnyError = ref(false)
+const fallbackTruncateOnContextExceeded = ref(false)
 const fallbackPenaltyBaseSec = ref(30)
 const fallbackPenaltyMaxSec = ref(300)
 const fallbackPenaltyWeightPercent = ref(20)
@@ -325,11 +339,13 @@ async function loadRoutes() {
     if (settingsRes) {
       const s = settingsRes.data as {
         fallbackOnAnyError?: boolean
+        fallbackTruncateOnContextExceeded?: boolean
         fallbackPenaltyBaseMs?: number
         fallbackPenaltyMaxMs?: number
         fallbackPenaltyWeightRatio?: number
       }
       fallbackOnAnyError.value = !!s.fallbackOnAnyError
+      fallbackTruncateOnContextExceeded.value = !!s.fallbackTruncateOnContextExceeded
       fallbackPenaltyBaseSec.value = Math.max(1, Math.round((s.fallbackPenaltyBaseMs ?? 30_000) / 1000))
       fallbackPenaltyMaxSec.value = Math.max(1, Math.round((s.fallbackPenaltyMaxMs ?? 300_000) / 1000))
       fallbackPenaltyWeightPercent.value = Math.max(1, Math.min(100, Math.round((s.fallbackPenaltyWeightRatio ?? 0.2) * 100)))
@@ -375,6 +391,7 @@ async function savePenaltySettings() {
   try {
     await client.put('/admin/settings', {
       fallbackOnAnyError: fallbackOnAnyError.value,
+      fallbackTruncateOnContextExceeded: fallbackTruncateOnContextExceeded.value,
       fallbackPenaltyBaseMs: fallbackPenaltyBaseSec.value * 1000,
       fallbackPenaltyMaxMs: fallbackPenaltyMaxSec.value * 1000,
       fallbackPenaltyWeightRatio: Number((fallbackPenaltyWeightPercent.value / 100).toFixed(3)),

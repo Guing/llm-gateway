@@ -58,6 +58,64 @@ function extractResponsesTextContent(content: unknown): string {
     .join('')
 }
 
+function mapResponsesMessageContentToOpenAI(content: unknown): unknown {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+
+  const mappedParts: Array<Record<string, unknown>> = []
+  let droppedImageParts = 0
+
+  for (const part of content) {
+    if (typeof part === 'string') {
+      if (part.length > 0) {
+        mappedParts.push({ type: 'text', text: part })
+      }
+      continue
+    }
+    if (!part || typeof part !== 'object') continue
+
+    const recordPart = part as Record<string, unknown>
+    const type = typeof recordPart.type === 'string' ? recordPart.type : ''
+
+    if (type === 'input_text' || type === 'output_text' || type === 'text') {
+      const text = typeof recordPart.text === 'string' ? recordPart.text : ''
+      if (text.length > 0) {
+        mappedParts.push({ type: 'text', text })
+      }
+      continue
+    }
+
+    if (type === 'input_image' || type === 'image_url' || type === 'image') {
+      const imageUrlField = recordPart.image_url
+      const url =
+        typeof imageUrlField === 'string'
+          ? imageUrlField
+          : (imageUrlField && typeof imageUrlField === 'object' && typeof (imageUrlField as Record<string, unknown>).url === 'string'
+              ? ((imageUrlField as Record<string, unknown>).url as string)
+              : (typeof recordPart.url === 'string' ? recordPart.url : ''))
+
+      if (url.length > 0) {
+        mappedParts.push({ type: 'image_url', image_url: { url } })
+      } else {
+        droppedImageParts += 1
+      }
+    }
+  }
+
+  if (mappedParts.length === 0) {
+    if (droppedImageParts > 0) {
+      return `[${droppedImageParts} image(s) were omitted because image URL was missing]`
+    }
+    return ''
+  }
+
+  if (mappedParts.length === 1 && mappedParts[0].type === 'text') {
+    return mappedParts[0].text
+  }
+
+  return mappedParts
+}
+
 function responsesInputToMessages(input: unknown): Array<Record<string, unknown>> {
   if (typeof input === 'string') {
     return [{ role: 'user', content: input }]
@@ -72,13 +130,41 @@ function responsesInputToMessages(input: unknown): Array<Record<string, unknown>
 
     if (entry.type === 'message') {
       const role = entry.role === 'assistant' ? 'assistant' : 'user'
-      const text = extractResponsesTextContent(entry.content)
-      if (text) messages.push({ role, content: text })
+      const mappedContent = mapResponsesMessageContentToOpenAI(entry.content)
+      if (
+        (typeof mappedContent === 'string' && mappedContent.length > 0) ||
+        (Array.isArray(mappedContent) && mappedContent.length > 0)
+      ) {
+        messages.push({ role, content: mappedContent })
+      }
       continue
     }
 
     if (entry.type === 'input_text' && typeof entry.text === 'string') {
       messages.push({ role: 'user', content: entry.text })
+      continue
+    }
+
+    if (entry.type === 'input_image') {
+      const imageUrlField = entry.image_url
+      const url =
+        typeof imageUrlField === 'string'
+          ? imageUrlField
+          : (imageUrlField && typeof imageUrlField === 'object' && typeof (imageUrlField as Record<string, unknown>).url === 'string'
+              ? ((imageUrlField as Record<string, unknown>).url as string)
+              : (typeof entry.url === 'string' ? entry.url : ''))
+
+      if (url.length > 0) {
+        messages.push({
+          role: 'user',
+          content: [{ type: 'image_url', image_url: { url } }],
+        })
+      } else {
+        messages.push({
+          role: 'user',
+          content: '[1 image was omitted because image URL was missing]',
+        })
+      }
       continue
     }
 
@@ -434,6 +520,18 @@ async function handleGatewayRequest(
     `[Gateway] Available routes: ` +
     routes.map((r) => `${r.channelName}/${r.actualModel}(p=${r.priority})`).join(', ')
   )
+
+  // Normalize tool calls and responses for OpenAI-format requests.
+  // Ensures tool_call_id in tool messages matches assistant.tool_calls,
+  // and injects synthetic assistant messages for orphaned tool responses.
+  if ((incomingFormat === 'openai' || incomingFormat === 'openai-responses') && 
+      Array.isArray(body.messages) && hasTools) {
+    const bodyAny = body as Record<string, unknown>
+    bodyAny.messages = normalizeToolConversation(
+      bodyAny.messages as Array<Record<string, unknown>>,
+      bodyAny.tools
+    )
+  }
 
   if (isStreaming) {
     await handleStreaming(req, res, body, incomingFormat, routes, virtualModel, requestedAt)

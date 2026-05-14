@@ -26,6 +26,7 @@ router.put('/', (req: Request, res: Response) => {
   const current = getSettings()
   const {
     fallbackOnAnyError,
+    fallbackTruncateOnContextExceeded,
     fallbackPenaltyBaseMs,
     fallbackPenaltyMaxMs,
     fallbackPenaltyWeightRatio,
@@ -33,6 +34,7 @@ router.put('/', (req: Request, res: Response) => {
 
   const patch: Record<string, unknown> = {}
   if (typeof fallbackOnAnyError === 'boolean') patch.fallbackOnAnyError = fallbackOnAnyError
+  if (typeof fallbackTruncateOnContextExceeded === 'boolean') patch.fallbackTruncateOnContextExceeded = fallbackTruncateOnContextExceeded
 
   if (fallbackPenaltyBaseMs !== undefined) {
     const n = Number(fallbackPenaltyBaseMs)
