@@ -335,6 +335,24 @@ function sanitizeRequestForRoute(
     }
   }
 
+  // ── Null-content normalization (special case) ──────────────────────────────
+  // Some strict OpenAI-compatible upstreams (e.g. certain CME Cloud / third-party
+  // providers) reject messages where `content` is null/undefined AND `tool_calls`
+  // is absent or undefined, responding with:
+  //   "Either `content` or `tool_calls` must be set"
+  // Normalise every message so that:
+  //   • assistant messages with null/undefined content but with tool_calls keep
+  //     content as-is (the tool_calls field satisfies the constraint).
+  //   • any other message with null/undefined content gets content set to "".
+  if (format === 'openai' && Array.isArray(b.messages)) {
+    b.messages = (b.messages as Array<Record<string, unknown>>).map((msg) => {
+      if (msg.content !== null && msg.content !== undefined) return msg
+      const hasToolCalls = Array.isArray(msg.tool_calls) && (msg.tool_calls as unknown[]).length > 0
+      if (hasToolCalls) return msg
+      return { ...msg, content: '' }
+    })
+  }
+
   // OpenAI chat.completions only accepts function tools with nested `function` schema.
   // Normalize payload from Responses-style or legacy client formats.
   if (format === 'openai') {
