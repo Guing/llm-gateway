@@ -26,8 +26,8 @@ RUN pnpm install --frozen-lockfile --filter backend --ignore-scripts
 
 COPY packages/backend ./packages/backend
 
-# Generate Prisma client types (--no-engine skips native binary download, safe on arm64/QEMU)
-RUN cd packages/backend && npx prisma generate --no-engine
+# Generate Prisma client and download engine binary for linux-musl-openssl-3.0.x (Alpine)
+RUN cd packages/backend && npx prisma generate
 
 # Compile TypeScript to JavaScript
 RUN pnpm --filter backend build
@@ -62,10 +62,9 @@ ENV NODE_ENV=production \
     PORT=7500 \
     DATABASE_URL=file:/data/prod.db
 
-# Generate Prisma client at startup (native arch), then migrate and start.
+# Migrate and start (engine binary already bundled in image).
 CMD ["sh", "-c", \
   "cd /app/packages/backend && \
-  node_modules/.bin/prisma generate && \
    node_modules/.bin/prisma migrate deploy && \
    cd /app && \
    node packages/backend/dist/index.js"]
