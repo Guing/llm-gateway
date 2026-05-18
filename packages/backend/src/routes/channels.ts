@@ -209,6 +209,11 @@ router.post('/test', async (req: AuthRequest, res: Response): Promise<void> => {
   if (isAnthropic) {
     headers['x-api-key'] = apiKey
     headers['anthropic-version'] = '2023-06-01'
+    // Custom Anthropic-compatible providers may require Authorization: Bearer instead
+    // of x-api-key, so send both for custom-anthropic.
+    if (provider === 'custom-anthropic') {
+      headers['Authorization'] = `Bearer ${apiKey}`
+    }
   } else {
     headers['Authorization'] = `Bearer ${apiKey}`
   }

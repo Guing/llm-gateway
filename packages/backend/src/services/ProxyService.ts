@@ -535,8 +535,14 @@ export async function proxyRequest(
 
   let endpoint: string
   if (upstreamFormat === 'anthropic') {
+    // Standard Anthropic API uses x-api-key.
+    // Custom Anthropic-compatible providers may use Authorization: Bearer instead,
+    // so for custom-anthropic we send both headers to cover either scheme.
     headers['x-api-key'] = decryptedApiKey
     headers['anthropic-version'] = '2023-06-01'
+    if (provider === 'custom-anthropic') {
+      headers['Authorization'] = `Bearer ${decryptedApiKey}`
+    }
     endpoint = `${baseUrl.replace(/\/$/, '')}/v1/messages`
   } else {
     headers['Authorization'] = `Bearer ${decryptedApiKey}`

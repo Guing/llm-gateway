@@ -41,10 +41,10 @@
               </div>
             </div>
             <div class="flex-1 min-w-0">
-              <p class="text-xs text-gray-400 mb-1">Anthropic 兼容接口</p>
+              <p class="text-xs text-gray-400 mb-1">Anthropic 兼容接口 <span class="text-gray-300">（SDK base_url）</span></p>
               <div class="flex items-center gap-2 bg-gray-50 border rounded px-3 py-2">
-                <code class="flex-1 text-xs text-gray-700 select-all break-all">{{ apiBase }}/anthropic</code>
-                <el-button size="small" plain @click="copy(apiBase + '/anthropic')">复制</el-button>
+                <code class="flex-1 text-xs text-gray-700 select-all break-all">{{ apiBase }}</code>
+                <el-button size="small" plain @click="copy(apiBase)">复制</el-button>
               </div>
             </div>
           </div>
@@ -68,12 +68,38 @@ response = client.chat.completions.create(
 )
 print(response.choices[0].message.content)</code></pre>
             </el-tab-pane>
+            <el-tab-pane label="Python (Anthropic SDK)" name="python-anthropic">
+              <pre class="bg-gray-900 text-green-400 text-xs rounded p-3 overflow-x-auto"><code>import anthropic
+
+client = anthropic.Anthropic(
+    base_url="{{ apiBase }}",
+    api_key="sk-gw-your-key-here",
+)
+
+message = client.messages.create(
+    model="claude",   # 使用虚拟模型名
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+print(message.content[0].text)</code></pre>
+            </el-tab-pane>
             <el-tab-pane label="curl" name="curl">
               <pre class="bg-gray-900 text-green-400 text-xs rounded p-3 overflow-x-auto"><code>curl {{ apiBase }}/v1/chat/completions \
   -H "Authorization: Bearer sk-gw-your-key-here" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "gpt-4",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'</code></pre>
+            </el-tab-pane>
+            <el-tab-pane label="curl (Anthropic)" name="curl-anthropic">
+              <pre class="bg-gray-900 text-green-400 text-xs rounded p-3 overflow-x-auto"><code>curl {{ apiBase }}/v1/messages \
+  -H "x-api-key: sk-gw-your-key-here" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude",
+    "max_tokens": 1024,
     "messages": [{"role": "user", "content": "Hello!"}]
   }'</code></pre>
             </el-tab-pane>

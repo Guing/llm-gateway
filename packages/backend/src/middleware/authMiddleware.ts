@@ -39,7 +39,9 @@ export function jwtAuth(
 
 /**
  * Gateway API Key authentication middleware.
- * Expects: Authorization: Bearer sk-gw-<key>
+ * Accepts either:
+ *   Authorization: Bearer sk-gw-<key>  (OpenAI-style)
+ *   x-api-key: sk-gw-<key>             (Anthropic-style)
  * Looks up hashed key in DB, populates req.user and req.apiKeyRecord.
  */
 export async function apiKeyAuth(
@@ -48,12 +50,19 @@ export async function apiKeyAuth(
   next: NextFunction
 ): Promise<void> {
   const authHeader = req.headers.authorization
-  if (!authHeader?.startsWith('Bearer ')) {
+  const xApiKey = req.headers['x-api-key']
+
+  let key: string | undefined
+  if (authHeader?.startsWith('Bearer ')) {
+    key = authHeader.slice(7)
+  } else if (typeof xApiKey === 'string' && xApiKey.length > 0) {
+    key = xApiKey
+  }
+
+  if (!key) {
     res.status(401).json({ error: 'Missing Authorization header' })
     return
   }
-
-  const key = authHeader.slice(7)
   if (!key.startsWith('sk-gw-')) {
     res.status(401).json({ error: 'Invalid API key format' })
     return

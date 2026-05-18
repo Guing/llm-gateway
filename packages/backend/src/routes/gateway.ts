@@ -577,7 +577,7 @@ async function handleNonStreaming(
 
     // Determine format conversion
     const expectedProxyFormat: 'openai' | 'anthropic' = incomingFormat === 'anthropic' ? 'anthropic' : 'openai'
-    const upstreamFormat = route.provider === 'anthropic' ? 'anthropic' : 'openai'
+    const upstreamFormat = (route.provider === 'anthropic' || route.provider === 'custom-anthropic') ? 'anthropic' : 'openai'
     let responseData = upstreamData
 
     if (expectedProxyFormat === 'openai' && upstreamFormat === 'anthropic') {
@@ -700,7 +700,7 @@ async function handleStreaming(
         // Note: a premature close that happens AFTER data has already been sent to the client
         // (mid-stream) cannot be retried — the client has already received partial output.
         const upstreamProbed = await probeStream(resp.body as NodeJS.ReadableStream, STREAM_PROBE_TIMEOUT_MS)
-        const upstreamFormat = r.provider === 'anthropic' ? 'anthropic' : 'openai'
+        const upstreamFormat = (r.provider === 'anthropic' || r.provider === 'custom-anthropic') ? 'anthropic' : 'openai'
         const candidateInterceptor = new StreamInterceptor()
         const transform = candidateInterceptor.createTransform(upstreamFormat, streamTargetFormat, {
           responseModel: virtualModel,
