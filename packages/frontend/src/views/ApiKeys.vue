@@ -1,13 +1,14 @@
 <template>
-  <div class="p-6">
-    <div class="flex justify-between items-center mb-6">
-      <h2 class="text-2xl font-bold text-gray-800">API Keys 管理</h2>
+  <div class="p-3 sm:p-6">
+    <div class="flex justify-between items-center mb-4 sm:mb-6 gap-2">
+      <h2 class="text-xl sm:text-2xl font-bold text-gray-800">API Keys 管理</h2>
       <el-button type="primary" @click="openCreate">
         <el-icon class="mr-1"><Plus /></el-icon>生成新 Key
       </el-button>
     </div>
 
     <el-card shadow="never" class="border">
+      <div class="overflow-x-auto">
       <el-table :data="paginatedKeys" stripe v-loading="loading">
         <el-table-column prop="name" label="名称" min-width="140" />
         <el-table-column label="API Key" min-width="320">
@@ -56,21 +57,31 @@
           </template>
         </el-table-column>
       </el-table>
-      <div class="mt-4 flex justify-end">
+      </div>
+      <div class="mt-4 flex justify-end flex-wrap gap-2">
         <el-pagination
           v-model:current-page="currentPage"
           v-model:page-size="pageSize"
           :page-sizes="[10, 20, 50, 100]"
           :total="keys.length"
-          layout="total, sizes, prev, pager, next"
+          layout="total, prev, pager, next"
           background
+          class="hidden sm:flex"
+          @size-change="currentPage = 1"
+        />
+        <el-pagination
+          v-model:current-page="currentPage"
+          :total="keys.length"
+          layout="prev, pager, next"
+          background
+          class="sm:hidden"
           @size-change="currentPage = 1"
         />
       </div>
     </el-card>
 
     <!-- Create Dialog -->
-    <el-dialog v-model="dialogVisible" title="生成新 API Key" width="380px">
+    <el-dialog v-model="dialogVisible" title="生成新 API Key" width="min(380px, 95vw)">
       <el-form ref="formRef" :model="form" :rules="rules" label-width="80px" @submit.prevent>
         <el-form-item label="名称" prop="name">
           <el-input v-model="form.name" placeholder="为这个 Key 起个名字" @keyup.enter="handleCreate" />

@@ -1,13 +1,14 @@
 <template>
-  <div class="p-6">
-    <div class="flex justify-between items-center mb-6">
-      <h2 class="text-2xl font-bold text-gray-800">用户管理</h2>
+  <div class="p-3 sm:p-6">
+    <div class="flex justify-between items-center mb-4 sm:mb-6 gap-2">
+      <h2 class="text-xl sm:text-2xl font-bold text-gray-800">用户管理</h2>
       <el-button type="primary" @click="openCreate">
         <el-icon class="mr-1"><Plus /></el-icon>添加用户
       </el-button>
     </div>
 
     <el-card shadow="never" class="border">
+      <div class="overflow-x-auto">
       <el-table :data="paginatedUsers" stripe v-loading="loading">
         <el-table-column prop="id" label="ID" width="60" />
         <el-table-column prop="email" label="邮箱" min-width="200" />
@@ -44,21 +45,31 @@
           </template>
         </el-table-column>
       </el-table>
-      <div class="mt-4 flex justify-end">
+      </div>
+      <div class="mt-4 flex justify-end flex-wrap gap-2">
         <el-pagination
           v-model:current-page="currentPage"
           v-model:page-size="pageSize"
           :page-sizes="[10, 20, 50, 100]"
           :total="adminStore.users.length"
-          layout="total, sizes, prev, pager, next"
+          layout="total, prev, pager, next"
           background
+          class="hidden sm:flex"
+          @size-change="currentPage = 1"
+        />
+        <el-pagination
+          v-model:current-page="currentPage"
+          :total="adminStore.users.length"
+          layout="prev, pager, next"
+          background
+          class="sm:hidden"
           @size-change="currentPage = 1"
         />
       </div>
     </el-card>
 
     <!-- Dialog -->
-    <el-dialog v-model="dialogVisible" :title="editingId ? '编辑用户' : '添加用户'" width="420px">
+    <el-dialog v-model="dialogVisible" :title="editingId ? '编辑用户' : '添加用户'" width="min(420px, 95vw)">
       <el-form ref="formRef" :model="form" :rules="formRules" label-width="80px" @submit.prevent>
         <el-form-item label="邮箱" prop="email">
           <el-input v-model="form.email" :disabled="!!editingId" />

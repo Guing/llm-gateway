@@ -1,7 +1,7 @@
 <template>
-  <div class="flex h-full" style="height: calc(100vh - 0px)">
+  <div class="flex h-full">
     <!-- Left sidebar: user list -->
-    <div class="w-64 border-r border-gray-200 flex flex-col bg-white">
+    <div :class="['flex-shrink-0 w-full sm:w-64 border-r border-gray-200 flex flex-col bg-white', mobileShowChat ? 'hidden sm:flex' : 'flex']">
       <div class="p-4 border-b border-gray-200 flex items-center justify-between">
         <div>
           <h3 class="font-semibold text-gray-700">聊天记录</h3>
@@ -99,16 +99,24 @@
     </div>
 
     <!-- Right: conversation view -->
-    <div class="flex-1 flex flex-col bg-gray-50">
+    <div :class="['flex-1 flex flex-col bg-gray-50 min-w-0', mobileShowChat ? 'flex' : 'hidden sm:flex']">
       <!-- Header -->
-      <div v-if="selectedUserId" class="px-6 pt-3 pb-2 bg-white border-b border-gray-200">
+      <div v-if="selectedUserId" class="px-3 sm:px-6 pt-3 pb-2 bg-white border-b border-gray-200">
         <!-- Row 1: user info + action buttons -->
         <div class="flex items-center justify-between mb-2">
-          <div>
-            <h4 class="font-semibold text-gray-700">{{ selectedUserEmail }}</h4>
-            <p class="text-xs text-gray-400">
-              共 {{ logsStore.conversationPagination.total }} 条对话记录
-            </p>
+          <div class="flex items-center gap-2 min-w-0">
+            <button
+              class="sm:hidden flex items-center text-blue-500 hover:text-blue-700 shrink-0"
+              @click="mobileShowChat = false"
+            >
+              <el-icon size="18"><ArrowLeft /></el-icon>
+            </button>
+            <div class="min-w-0">
+              <h4 class="font-semibold text-gray-700 truncate">{{ selectedUserEmail }}</h4>
+              <p class="text-xs text-gray-400">
+                共 {{ logsStore.conversationPagination.total }} 条对话记录
+              </p>
+            </div>
           </div>
           <div class="flex items-center gap-2">
             <el-dropdown
@@ -200,7 +208,8 @@
       >
         <div class="text-center">
           <el-icon size="48" class="mb-2"><ChatDotRound /></el-icon>
-          <p>选择左侧用户查看对话记录</p>
+          <p class="hidden sm:block">选择左侧用户查看对话记录</p>
+          <p class="sm:hidden">从列表中选择用户查看对话记录</p>
         </div>
       </div>
 
@@ -208,7 +217,7 @@
       <div
         v-else
         ref="chatContainer"
-        class="flex-1 overflow-y-auto px-6 py-4 space-y-6"
+        class="flex-1 overflow-y-auto px-3 sm:px-6 py-4 space-y-6"
       >
         <div v-if="loadingConversation" class="text-center py-8">
           <el-icon class="animate-spin"><Loading /></el-icon>
@@ -318,7 +327,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { Download, ArrowDown, Delete } from '@element-plus/icons-vue'
+import { Download, ArrowDown, Delete, ArrowLeft } from '@element-plus/icons-vue'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import { useLogsStore } from '@/stores/logs'
 import { useAuthStore } from '@/stores/auth'
@@ -348,6 +357,7 @@ const selectedUserId = ref<number | null>(null)
 const loadingConversation = ref(false)
 const isLoadingMore = ref(false)
 const refreshing = ref(false)
+const mobileShowChat = ref(false)
 const filterModel = ref('')
 const filterChannel = ref('')
 const filterActualModel = ref('')
@@ -471,6 +481,7 @@ function parseAssistantContent(responseBody: string | null): string {
 
 async function selectUser(userId: number) {
   selectedUserId.value = userId
+  mobileShowChat.value = true
   await loadConversation(userId, 1)
 }
 

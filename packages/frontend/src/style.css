@@ -17,3 +17,48 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #a1a1a1;
 }
+
+/* ── Mobile responsive overrides ── */
+@media (max-width: 640px) {
+  /* Make all el-dialog responsive on mobile */
+  .el-dialog {
+    width: 95vw !important;
+    max-width: 95vw !important;
+    margin: 0 auto !important;
+  }
+  .el-dialog__body {
+    padding: 12px 16px !important;
+  }
+  .el-dialog__header {
+    padding: 12px 16px 8px !important;
+  }
+  .el-dialog__footer {
+    padding: 8px 16px 16px !important;
+  }
+
+  /* Compact pagination on mobile */
+  .el-pagination {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 4px;
+  }
+  .el-pagination .el-pagination__sizes {
+    display: none;
+  }
+
+  /* Touch-friendly button sizing */
+  .el-button {
+    touch-action: manipulation;
+  }
+
+  /* Date picker full width on mobile */
+  .el-date-editor--daterange.el-input__wrapper {
+    width: 100% !important;
+  }
+}
+
+/* Prevent horizontal overflow in table containers */
+.el-table-responsive {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}

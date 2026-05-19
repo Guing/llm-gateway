@@ -1,5 +1,5 @@
 <template>
-  <div class="p-6">
+  <div class="p-3 sm:p-6">
     <h2 class="text-2xl font-bold text-gray-800 mb-6">仪表盘</h2>
 
     <!-- Stats cards -->
@@ -20,7 +20,7 @@
     <!-- API Usage Guide -->
     <el-card shadow="never" class="border mb-6">
       <template #header>
-        <div class="flex justify-between items-center">
+        <div class="flex justify-between items-center flex-wrap gap-2">
           <span class="font-semibold text-gray-700">🚀 如何使用 LLM Gateway</span>
           <el-button size="small" type="primary" @click="quickCreateKey">
             <el-icon class="mr-1"><Key /></el-icon>快速创建 API Key
@@ -150,7 +150,7 @@ console.log(resp.choices[0].message.content)</code></pre>
     <!-- Recent logs table -->
     <el-card shadow="never" class="border">
       <template #header>
-        <div class="flex justify-between items-center">
+        <div class="flex justify-between items-center flex-wrap gap-2">
           <span class="font-semibold text-gray-700">最近请求</span>
           <router-link to="/logs">
             <el-button size="small" type="primary" plain>查看全部</el-button>
@@ -158,6 +158,7 @@ console.log(resp.choices[0].message.content)</code></pre>
         </div>
       </template>
 
+      <div class="overflow-x-auto -mx-1">
       <el-table :data="recentLogs" stripe size="small" v-loading="loading">
         <el-table-column label="时间" width="160">
           <template #default="{ row }">{{ formatTime(row.requestedAt) }}</template>
@@ -183,10 +184,11 @@ console.log(resp.choices[0].message.content)</code></pre>
           </template>
         </el-table-column>
       </el-table>
+      </div>
     </el-card>
 
     <!-- Quick create key dialog -->
-    <el-dialog v-model="keyDialogVisible" title="快速创建 API Key" width="360px">
+    <el-dialog v-model="keyDialogVisible" title="快速创建 API Key" width="min(360px, 95vw)">
       <el-form ref="keyFormRef" :model="keyForm" :rules="keyRules" label-width="80px">
         <el-form-item label="名称" prop="name">
           <el-input v-model="keyForm.name" placeholder="为这个 Key 起个名字" />

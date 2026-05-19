@@ -1,8 +1,8 @@
 <template>
-  <div class="p-6">
-    <div class="flex justify-between items-center mb-6">
+  <div class="p-3 sm:p-6">
+    <div class="flex flex-wrap justify-between items-start mb-4 sm:mb-6 gap-3">
       <div>
-        <h2 class="text-2xl font-bold text-gray-800">模型优先级配置</h2>
+        <h2 class="text-xl sm:text-2xl font-bold text-gray-800">模型优先级配置</h2>
         <p class="text-sm text-gray-400 mt-1">数字越大优先级越高，相同优先级内按权重随机负载均衡</p>
       </div>
       <el-button type="primary" :loading="saving" @click="saveAll">
@@ -38,7 +38,7 @@
       </div>
     </el-card>
 
-    <el-dialog v-model="fallbackDialogVisible" title="Fallback 配置" width="720px" destroy-on-close>
+    <el-dialog v-model="fallbackDialogVisible" title="Fallback 配置" width="min(720px, 95vw)" destroy-on-close>
       <div class="space-y-5">
         <div class="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
           <div>

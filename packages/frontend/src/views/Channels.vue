@@ -1,8 +1,8 @@
 <template>
-  <div class="p-6">
-    <div class="flex justify-between items-center mb-6">
-      <h2 class="text-2xl font-bold text-gray-800">上游渠道管理</h2>
-      <div class="flex items-center gap-2">
+  <div class="p-3 sm:p-6">
+    <div class="flex flex-wrap justify-between items-start mb-4 sm:mb-6 gap-3">
+      <h2 class="text-xl sm:text-2xl font-bold text-gray-800">上游渠道管理</h2>
+      <div class="flex items-center gap-2 flex-wrap">
         <el-button @click="openQuickImport">
           <el-icon class="mr-1"><UploadFilled /></el-icon>快速导入
         </el-button>
@@ -16,7 +16,7 @@
         <el-dialog
           v-model="exportDialogVisible"
           title="导出全部渠道 JSON"
-          width="900px"
+          width="min(900px, 95vw)"
           :close-on-click-modal="false"
         >
           <div class="space-y-3">
@@ -47,6 +47,7 @@
     </div>
 
     <el-card shadow="never" class="border">
+      <div class="overflow-x-auto">
       <el-table :data="paginatedChannels" stripe v-loading="loading" row-key="id">
         <el-table-column type="expand">
           <template #default="{ row }">
@@ -111,14 +112,24 @@
           </template>
         </el-table-column>
       </el-table>
-      <div class="mt-4 flex justify-end">
+      </div>
+      <div class="mt-4 flex justify-end flex-wrap gap-2">
         <el-pagination
           v-model:current-page="currentPage"
           v-model:page-size="pageSize"
           :page-sizes="[10, 20, 50]"
           :total="adminStore.channels.length"
-          layout="total, sizes, prev, pager, next"
+          layout="total, prev, pager, next"
           background
+          class="hidden sm:flex"
+          @size-change="currentPage = 1"
+        />
+        <el-pagination
+          v-model:current-page="currentPage"
+          :total="adminStore.channels.length"
+          layout="prev, pager, next"
+          background
+          class="sm:hidden"
           @size-change="currentPage = 1"
         />
       </div>
@@ -127,7 +138,7 @@
     <el-dialog
       v-model="dialogVisible"
       :title="editingId ? '编辑渠道' : '添加渠道'"
-      width="800px"
+      width="min(800px, 95vw)"
       :close-on-click-modal="false"
     >
       <el-form ref="formRef" :model="form" :rules="rules" label-width="100px" @submit.prevent>
@@ -239,7 +250,7 @@
     <el-dialog
       v-model="quickImportVisible"
       title="快速导入渠道"
-      width="900px"
+      width="min(900px, 95vw)"
       :close-on-click-modal="false"
     >
       <div class="space-y-3">

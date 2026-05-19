@@ -1,8 +1,8 @@
 <template>
-  <div class="p-6 space-y-5">
+  <div class="p-3 sm:p-6 space-y-5">
     <!-- Header -->
-    <div class="flex items-center justify-between flex-wrap gap-3">
-      <h2 class="text-2xl font-bold text-gray-800">数据分析</h2>
+    <div class="flex items-start sm:items-center justify-between flex-wrap gap-3">
+      <h2 class="text-xl sm:text-2xl font-bold text-gray-800">数据分析</h2>
       <div class="flex items-center gap-2 flex-wrap">
         <el-radio-group v-model="days" size="small" @change="onDaysChange">
           <el-radio-button :value="7">近 7 天</el-radio-button>
@@ -19,7 +19,7 @@
           end-placeholder="结束日期"
           :disabled-date="disabledDate"
           value-format="YYYY-MM-DD"
-          style="width: 240px"
+          class="!w-full sm:!w-60"
           @change="onDateRangeChange"
           @clear="onDateRangeClear"
           clearable
@@ -119,6 +119,7 @@
         <template #header>
           <span class="font-semibold text-gray-700">渠道 × 模型 Token 明细</span>
         </template>
+        <div class="overflow-x-auto">
         <el-table :data="cmTokenData" size="small" stripe max-height="400">
           <el-table-column prop="channelName" label="渠道" min-width="120" />
           <el-table-column prop="actualModel" label="实际模型" min-width="160" />
@@ -135,6 +136,7 @@
             </template>
           </el-table-column>
         </el-table>
+        </div>
       </el-card>
 
       <!-- 9. Top Users -->
