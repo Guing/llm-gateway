@@ -617,15 +617,48 @@ export async function proxyRequest(
  * Convert an Anthropic non-streaming response to OpenAI format.
  */
 export function anthropicResponseToOpenAI(data: Record<string, unknown>): Record<string, unknown> {
-  const content = (data.content as Array<{ type: string; text: string }> | undefined) ?? []
+  const content = (data.content as Array<{ type: string; text?: string; reasoning?: string }> | undefined) ?? []
+  
+  // Extract text content (actual response)
   const text = content
     .filter((c) => c.type === 'text')
     .map((c) => c.text)
+    .join('')
+  
+  // Extract reasoning content (chain-of-thought from reasoning models)
+  const reasoning = content
+    .filter((c) => c.type === 'reasoning')
+    .map((c) => c.reasoning)
     .join('')
 
   const usage = data.usage as
     | { input_tokens?: number; output_tokens?: number }
     | undefined
+
+  // If there's no actual text content but there's reasoning, the model didn't produce a response
+  // This can happen when the thinking token limit is hit or model failed to transition from thinking to answering
+  if (!text && reasoning) {
+    return {
+      id: data.id ?? `chatcmpl-${Date.now()}`,
+      object: 'chat.completion',
+      created: Math.floor(Date.now() / 1000),
+      model: data.model ?? '',
+      choices: [
+        {
+          index: 0,
+          message: { role: 'assistant', content: '' },
+          finish_reason: 'length', // Indicates the response was truncated due to token limits
+        },
+      ],
+      usage: {
+        prompt_tokens: usage?.input_tokens ?? 0,
+        completion_tokens: usage?.output_tokens ?? 0,
+        total_tokens: (usage?.input_tokens ?? 0) + (usage?.output_tokens ?? 0),
+      },
+      // Include reasoning_content for debugging purposes
+      reasoning_content: reasoning,
+    }
+  }
 
   return {
     id: data.id ?? `chatcmpl-${Date.now()}`,

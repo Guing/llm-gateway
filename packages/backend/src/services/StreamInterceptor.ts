@@ -349,6 +349,7 @@ export class StreamInterceptor extends EventEmitter {
       const type = data.type as string
       if (type === 'content_block_delta') {
         const delta = data.delta as { type?: string; text?: string } | undefined
+        // Handle text_delta (actual response content)
         if (delta?.type === 'text_delta' && delta.text) {
           return {
             choices: [
@@ -358,6 +359,14 @@ export class StreamInterceptor extends EventEmitter {
               },
             ],
           }
+        }
+        // Handle reasoning_delta (chain-of-thought from reasoning models)
+        // We skip emitting reasoning content to OpenAI format since it doesn't support it
+        // The reasoning content is accumulated separately for logging purposes
+        if (delta?.type === 'reasoning_delta' && delta.text) {
+          // Accumulate reasoning content for potential logging
+          this.fullContent += delta.text
+          return {} // Filter out reasoning from OpenAI response
         }
       } else if (type === 'message_delta') {
         const usage = data.usage as { output_tokens?: number } | undefined
