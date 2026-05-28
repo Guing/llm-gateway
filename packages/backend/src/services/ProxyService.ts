@@ -698,7 +698,7 @@ export async function proxyImageRequest(
   const { baseUrl, decryptedApiKey, provider, actualModel, channelName } = route
 
   // Build upstream body — substitute actual model name
-  const upstreamBody = { ...body, model: actualModel }
+  const upstreamBody: Record<string, unknown> = { ...body, model: actualModel }
 
   // Build headers
   const headers: Record<string, string> = {
