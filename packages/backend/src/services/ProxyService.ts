@@ -682,6 +682,100 @@ export function anthropicResponseToOpenAI(data: Record<string, unknown>): Record
 }
 
 /**
+ * Forward an image generation request to an upstream channel.
+ *
+ * Image generation uses a separate endpoint (`/v1/images/generations`) and is always
+ * non-streaming. The request body is passed through as-is (OpenAI compatible format).
+ *
+ * @param route  Selected upstream channel + model
+ * @param body   Original request body ({ model, prompt, size?, n? })
+ * @returns Parsed JSON response from upstream
+ */
+export async function proxyImageRequest(
+  route: RouteCandidate,
+  body: Record<string, unknown>
+): Promise<Response> {
+  const { baseUrl, decryptedApiKey, provider, actualModel, channelName } = route
+
+  // Build upstream body — substitute actual model name
+  const upstreamBody = { ...body, model: actualModel }
+
+  // Build headers
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'User-Agent': 'LLM-Gateway/1.0',
+  }
+
+  // Merge custom headers from route config
+  if (route.config.customHeaders) {
+    for (const [k, v] of Object.entries(route.config.customHeaders)) {
+      headers[k] = v
+    }
+  }
+
+  // Auth header — image generation is always OpenAI-compatible (Bearer token)
+  headers['Authorization'] = `Bearer ${decryptedApiKey}`
+
+  // Endpoint: /v1/images/generations
+  const endpoint = `${baseUrl.replace(/\/$/, '')}/v1/images/generations`
+
+  const sentAt = Date.now()
+  const promptPreview = typeof upstreamBody.prompt === 'string'
+    ? upstreamBody.prompt.slice(0, 100)
+    : ''
+
+  logger.info(
+    `[Proxy] → IMAGE-GEN ${endpoint}` +
+    ` | channel=${channelName} model=${upstreamBody.model}` +
+    ` prompt="${promptPreview}${promptPreview.length >= 100 ? '...' : ''}"` +
+    ` size=${upstreamBody.size ?? 'default'} n=${upstreamBody.n ?? 1}`
+  )
+
+  const bodyStr = JSON.stringify(upstreamBody)
+  logger.verbose(`[Proxy] image-gen request body (${bodyStr.length} bytes): ${bodyStr.length > 2000 ? bodyStr.slice(0, 2000) + '…[truncated]' : bodyStr}`)
+
+  // Configurable upstream timeout — default 120s for image generation (can be slow)
+  const proxyTimeoutMs = route.config.timeout ?? parseInt(process.env.PROXY_TIMEOUT_MS || '120000', 10)
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), proxyTimeoutMs)
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers,
+    body: bodyStr,
+    signal: controller.signal,
+  }).then(
+    (r) => { clearTimeout(timeoutId); return r },
+    (fetchErr: Error) => {
+      clearTimeout(timeoutId)
+      const elapsed = Date.now() - sentAt
+      if (fetchErr.name === 'AbortError') {
+        logger.warn(`[Proxy] ← image-gen timeout (${proxyTimeoutMs}ms) | channel=${channelName} ${elapsed}ms`)
+        throw new Error(`timeout after ${proxyTimeoutMs}ms`)
+      }
+      logger.warn(`[Proxy] ← image-gen fetch error | channel=${channelName} | ${fetchErr.message}`)
+      throw fetchErr
+    }
+  )
+
+  const elapsed = Date.now() - sentAt
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    logger.warn(
+      `[Proxy] ← ${response.status} ${response.statusText} | image-gen channel=${channelName} ${elapsed}ms` +
+      ` | ${errorText.slice(0, 500)}`
+    )
+    throw new Error(
+      `Upstream ${channelName} returned ${response.status}: ${errorText}`
+    )
+  }
+
+  logger.info(`[Proxy] ← ${response.status} OK | image-gen channel=${channelName} ${elapsed}ms`)
+  return response
+}
+
+/**
  * Convert an OpenAI non-streaming response to Anthropic format.
  */
 export function openAIResponseToAnthropic(data: Record<string, unknown>): Record<string, unknown> {

@@ -11,6 +11,7 @@ import {
 } from '../services/RouterService'
 import {
   proxyRequest,
+  proxyImageRequest,
   anthropicResponseToOpenAI,
   openAIResponseToAnthropic,
 } from '../services/ProxyService'
@@ -466,6 +467,134 @@ router.post('/responses', async (req: AuthRequest, res: Response): Promise<void>
 router.post('/messages', async (req: AuthRequest, res: Response): Promise<void> => {
   await handleGatewayRequest(req, res, 'anthropic')
 })
+
+// ---------------------------------------------------------------------------
+// POST /v1/images/generations  (OpenAI Images-compatible)
+// ---------------------------------------------------------------------------
+router.post('/images/generations', async (req: AuthRequest, res: Response): Promise<void> => {
+  await handleImageGenerationRequest(req, res)
+})
+
+// ---------------------------------------------------------------------------
+// Image generation handler (non-streaming, always OpenAI format)
+// ---------------------------------------------------------------------------
+async function handleImageGenerationRequest(
+  req: AuthRequest,
+  res: Response
+): Promise<void> {
+  const body = req.body as Record<string, unknown>
+  const virtualModel = typeof body.model === 'string' ? body.model : ''
+  const prompt = typeof body.prompt === 'string' ? body.prompt : ''
+  const requestedAt = new Date()
+
+  // Validate required fields
+  if (!virtualModel) {
+    res.status(400).json({ error: '"model" field is required' })
+    return
+  }
+  if (!prompt) {
+    res.status(400).json({ error: '"prompt" field is required' })
+    return
+  }
+
+  const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
+    || req.socket.remoteAddress
+    || '-'
+  logger.info(
+    `[Gateway] ← IMAGE-GEN ${virtualModel}` +
+    ` | prompt="${prompt.slice(0, 80)}${prompt.length > 80 ? '...' : ''}"` +
+    ` size=${body.size ?? 'default'} n=${body.n ?? 1}` +
+    ` | user=${req.user?.id ?? '-'} key=${req.apiKeyRecord?.id ?? '-'} ip=${clientIp}`
+  )
+
+  // Look up routes
+  let routes
+  try {
+    routes = await getRoutesForModel(virtualModel)
+  } catch {
+    logger.error(`[Gateway] Image-gen route lookup failed | model=${virtualModel}`)
+    res.status(500).json({ error: 'Route lookup failed' })
+    return
+  }
+
+  if (routes.length === 0) {
+    logger.warn(`[Gateway] No routes for image-gen model: ${virtualModel}`)
+    res.status(404).json({ error: `No routes configured for model "${virtualModel}"` })
+    return
+  }
+
+  logger.debug(
+    `[Gateway] Image-gen routes: ` +
+    routes.map((r) => `${r.channelName}/${r.actualModel}(p=${r.priority})`).join(', ')
+  )
+
+  // Create log entry
+  const logCreatePromise = prisma.requestLog.create({
+    data: {
+      userId: req.user?.id ?? null,
+      apiKeyId: req.apiKeyRecord?.id ?? null,
+      virtualModel,
+      requestBody: JSON.stringify(body),
+      requestedAt,
+      isStreaming: false,
+    },
+  })
+
+  try {
+    const { result: upstreamResponse, route } = await executeWithFallback(
+      routes,
+      (r) => proxyImageRequest(r, body)
+    )
+
+    const upstreamData = (await upstreamResponse.json()) as Record<string, unknown>
+    const completedAt = new Date()
+    const duration = completedAt.getTime() - requestedAt.getTime()
+
+    // Replace virtual model name in response if present
+    if (upstreamData.model) upstreamData.model = virtualModel
+
+    // Send response to client
+    res.json(upstreamData)
+
+    // Fire-and-forget: update log in background
+    logCreatePromise
+      .then((logEntry) =>
+        prisma.requestLog.update({
+          where: { id: logEntry.id },
+          data: {
+            channelId: route.channelId,
+            actualModel: route.actualModel,
+            responseBody: JSON.stringify(upstreamData),
+            completedAt,
+            duration,
+            statusCode: 200,
+            modelTypes: JSON.stringify(route.types ?? []),
+          },
+        }).then(() =>
+          logger.info(
+            `[Gateway] ✓ #${logEntry.id} ${virtualModel} → ${route.channelName}/${route.actualModel}` +
+            ` [image-gen] | ${duration}ms | prompt="${prompt.slice(0, 40)}..."`
+          )
+        )
+      )
+      .catch((e) => logger.error(`[Gateway] Failed to save image-gen log for ${virtualModel}: ${(e as Error).message}`))
+  } catch (err) {
+    const errorMessage = (err as Error).message
+    const completedAt = new Date()
+    const duration = completedAt.getTime() - requestedAt.getTime()
+    logger.error(`[Gateway] ✗ ${virtualModel} [image-gen] | ${duration}ms | ${errorMessage}`)
+    res.status(500).json({ error: errorMessage })
+    // Best-effort log update (fire-and-forget)
+    logCreatePromise
+      .then((logEntry) =>
+        prisma.requestLog.update({
+          where: { id: logEntry.id },
+          data: { completedAt, duration, statusCode: 500, errorMessage },
+        })
+      )
+      .catch(() => {})
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Shared handler
