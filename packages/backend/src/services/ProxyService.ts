@@ -545,7 +545,11 @@ export async function proxyRequest(
     }
     endpoint = `${baseUrl.replace(/\/$/, '')}/v1/messages`
   } else {
-    headers['Authorization'] = `Bearer ${decryptedApiKey}`
+    // Local Ollama does not require authentication, while remote/proxied Ollama
+    // deployments can still opt into a Bearer token by configuring an API key.
+    if (decryptedApiKey) {
+      headers['Authorization'] = `Bearer ${decryptedApiKey}`
+    }
     endpoint = `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`
   }
 

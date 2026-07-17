@@ -9,7 +9,7 @@
 - **Tool/Function 支持**：统一处理 OpenAI Chat、Responses 及 legacy `functions` 三种工具定义格式，自动规范化并转换
 
 ### 多渠道管理
-- **多提供商支持**：可配置 OpenAI、Anthropic、自定义 OpenAI 兼容、自定义 Anthropic 兼容四种类型渠道
+- **多提供商支持**：可配置 OpenAI、Anthropic、Ollama、自定义 OpenAI 兼容、自定义 Anthropic 兼容渠道
 - **API Key 加密存储**：上游 API Key 以 AES-256-GCM 加密存储，12 字节随机 IV + 16 字节认证标签
 - **渠道连通性测试**：管理界面可一键测试渠道连通性
 - **渠道批量导入/导出**：支持 JSON 格式的渠道配置导出与批量导入
@@ -216,9 +216,12 @@ curl http://localhost:7500/v1/responses \
 
 - **名称**：管理界面显示名
 - **Base URL**：上游 API 地址（如 `https://api.openai.com`）
-- **API Key**：上游密钥，AES-256-GCM 加密存储
-- **Provider**：`openai` / `anthropic` / `custom` / `custom-anthropic`
+- **API Key**：上游密钥，AES-256-GCM 加密存储；本地 Ollama 可留空
+- **Provider**：`openai` / `anthropic` / `ollama` / `custom` / `custom-anthropic`
 - **模型列表**：该渠道支持的上游模型名
+
+Ollama 渠道填写服务根地址（默认 `http://localhost:11434`）和已通过 `ollama pull` 下载的模型名即可。网关通过 Ollama 的 OpenAI 兼容接口 `/v1/chat/completions` 转发请求。
+使用 Docker Compose 部署网关、而 Ollama 运行在宿主机时，Base URL 请填写 `http://host.docker.internal:11434`。
 
 ### 模型路由（Model Route）
 

@@ -7,6 +7,12 @@ import { AuthRequest, jwtAuth, requireAdmin } from '../middleware/authMiddleware
 const router: IRouter = Router()
 router.use(jwtAuth, requireAdmin)
 
+const SUPPORTED_PROVIDERS = new Set(['openai', 'anthropic', 'custom', 'custom-anthropic', 'ollama'])
+
+function isApiKeyRequired(provider: string): boolean {
+  return provider !== 'ollama'
+}
+
 export interface ModelRouteAdvancedConfig {
   priority?: number
   weight?: number
@@ -121,15 +127,23 @@ router.get('/', async (_req: AuthRequest, res: Response): Promise<void> => {
 // POST /api/admin/channels
 router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
   const { name, baseUrl, apiKey, provider = 'openai', models = [], modelAliases = {}, modelTypes = {}, modelAdvanced = {} } = req.body
-  if (!name || !baseUrl || !apiKey) {
-    res.status(400).json({ error: 'name, baseUrl, and apiKey are required' })
+  if (!name || !baseUrl) {
+    res.status(400).json({ error: 'name and baseUrl are required' })
+    return
+  }
+  if (!SUPPORTED_PROVIDERS.has(provider)) {
+    res.status(400).json({ error: `Unsupported provider: ${provider}` })
+    return
+  }
+  if (isApiKeyRequired(provider) && !apiKey) {
+    res.status(400).json({ error: 'apiKey is required for this provider' })
     return
   }
 
   const channel = await prisma.channel.create({
     data: {
       name, baseUrl, provider,
-      encryptedKey: encrypt(apiKey),
+      encryptedKey: encrypt(apiKey ?? ''),
       models: JSON.stringify(models),
       modelAliases: JSON.stringify(modelAliases),
       modelTypes: JSON.stringify(modelTypes),
@@ -152,6 +166,25 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
 router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
   const id = parseInt(req.params.id, 10)
   const { name, baseUrl, apiKey, provider, enabled, models, modelAliases, modelTypes, modelAdvanced } = req.body
+
+  if (provider !== undefined && !SUPPORTED_PROVIDERS.has(provider)) {
+    res.status(400).json({ error: `Unsupported provider: ${provider}` })
+    return
+  }
+
+  const current = await prisma.channel.findUnique({ where: { id } })
+  if (!current) {
+    res.status(404).json({ error: 'Channel not found' })
+    return
+  }
+
+  const targetProvider = provider ?? current.provider
+  let currentApiKey = ''
+  try { currentApiKey = decrypt(current.encryptedKey) } catch { /* validated below */ }
+  if (isApiKeyRequired(targetProvider) && !apiKey && !currentApiKey) {
+    res.status(400).json({ error: 'apiKey is required for this provider' })
+    return
+  }
 
   const data: Record<string, unknown> = {}
   if (name !== undefined) data.name = name
@@ -196,8 +229,13 @@ router.post('/test', async (req: AuthRequest, res: Response): Promise<void> => {
     baseUrl?: string; apiKey?: string; provider?: string; model?: string
   }
 
-  if (!baseUrl || !apiKey || !provider || !model) {
-    res.status(400).json({ error: '参数不完整，需要 baseUrl、apiKey、provider、model' })
+  if (provider && !SUPPORTED_PROVIDERS.has(provider)) {
+    res.status(400).json({ error: `不支持的渠道类型：${provider}` })
+    return
+  }
+
+  if (!baseUrl || !provider || !model || (isApiKeyRequired(provider) && !apiKey)) {
+    res.status(400).json({ error: '参数不完整，需要 baseUrl、provider、model；非 Ollama 渠道还需要 apiKey' })
     return
   }
 
@@ -207,14 +245,14 @@ router.post('/test', async (req: AuthRequest, res: Response): Promise<void> => {
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (isAnthropic) {
-    headers['x-api-key'] = apiKey
+    headers['x-api-key'] = apiKey ?? ''
     headers['anthropic-version'] = '2023-06-01'
     // Custom Anthropic-compatible providers may require Authorization: Bearer instead
     // of x-api-key, so send both for custom-anthropic.
     if (provider === 'custom-anthropic') {
       headers['Authorization'] = `Bearer ${apiKey}`
     }
-  } else {
+  } else if (apiKey) {
     headers['Authorization'] = `Bearer ${apiKey}`
   }
 

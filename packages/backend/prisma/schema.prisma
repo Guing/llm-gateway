@@ -44,7 +44,7 @@ model Channel {
   name           String
   baseUrl        String
   encryptedKey   String              // AES-256-GCM encrypted upstream API key
-  provider       String    @default("openai") // "openai" | "anthropic" | "custom" | "custom-anthropic"
+  provider       String    @default("openai") // "openai" | "anthropic" | "custom" | "custom-anthropic" | "ollama"
   enabled        Boolean   @default(true)
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt

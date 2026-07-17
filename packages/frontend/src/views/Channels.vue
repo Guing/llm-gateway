@@ -146,9 +146,10 @@
           <el-input v-model="form.name" placeholder="渠道名称，如 OpenAI官方" />
         </el-form-item>
         <el-form-item label="类型" prop="provider">
-          <el-select v-model="form.provider" class="w-full">
+          <el-select v-model="form.provider" class="w-full" @change="handleProviderChange">
             <el-option label="OpenAI" value="openai" />
             <el-option label="Anthropic" value="anthropic" />
+            <el-option label="Ollama（本地模型）" value="ollama" />
             <el-option label="自定义（兼OpenAI应层）" value="custom" />
             <el-option label="自定义（兼Anthropic应层）" value="custom-anthropic" />
           </el-select>
@@ -157,13 +158,14 @@
           <el-input v-model="form.baseUrl" :placeholder="baseUrlPlaceholder" />
           <div class="text-xs text-gray-400 mt-1">{{ baseUrlHint }}</div>
         </el-form-item>
-        <el-form-item label="API Key" :prop="editingId ? '' : 'apiKey'">
+        <el-form-item label="API Key" :prop="form.provider === 'ollama' ? '' : 'apiKey'">
           <el-input
             v-model="form.apiKey"
             type="password"
             show-password
-            :placeholder="editingId ? '修改则填写新 Key，留空保持不变' : '上游 API Key'"
+            :placeholder="form.provider === 'ollama' ? '可选；本地 Ollama 无需填写' : (editingId ? '修改则填写新 Key，留空保持不变' : '上游 API Key')"
           />
+          <div v-if="form.provider === 'ollama'" class="text-xs text-gray-400 mt-1">本地 Ollama 默认无需认证；远程或代理服务需要 Bearer Token 时可填写。</div>
         </el-form-item>
 
         <el-divider content-position="left"><span class="text-xs text-gray-500">模型配置</span></el-divider>
@@ -597,7 +599,7 @@ interface ModelAdvancedConfig {
   customHeaders: { key: string; value: string }[]
 }
 
-type ProviderType = 'openai' | 'anthropic' | 'custom' | 'custom-anthropic'
+type ProviderType = 'openai' | 'anthropic' | 'custom' | 'custom-anthropic' | 'ollama'
 
 interface ImportModelConfig {
   modelId: string
@@ -622,7 +624,7 @@ interface ImportModelConfig {
 
 interface ImportChannelConfig {
   baseURL: string
-  apiKey: string
+  apiKey?: string
   apiType: ProviderType
   models: ImportModelConfig[]
 }
@@ -648,12 +650,18 @@ const CHANNEL_IMPORT_SCHEMA: Record<string, unknown> = {
       minProperties: 1,
       additionalProperties: {
         type: 'object',
-        required: ['baseURL', 'apiKey', 'apiType', 'models'],
+        required: ['baseURL', 'apiType', 'models'],
         additionalProperties: false,
+        allOf: [
+          {
+            if: { properties: { apiType: { const: 'ollama' } } },
+            else: { required: ['apiKey'] },
+          },
+        ],
         properties: {
           baseURL: { type: 'string', minLength: 1 },
-          apiKey: { type: 'string', minLength: 1 },
-          apiType: { type: 'string', enum: ['openai', 'anthropic', 'custom', 'custom-anthropic'] },
+          apiKey: { type: 'string' },
+          apiType: { type: 'string', enum: ['openai', 'anthropic', 'custom', 'custom-anthropic', 'ollama'] },
           models: {
             type: 'array',
             minItems: 1,
@@ -834,6 +842,7 @@ const rules = {
 const PROVIDERS: Record<string, { label: string; tag: 'primary' | 'warning' | 'info' | 'success' | 'danger' }> = {
   openai: { label: 'OpenAI', tag: 'primary' },
   anthropic: { label: 'Anthropic', tag: 'warning' },
+  ollama: { label: 'Ollama', tag: 'success' },
   custom: { label: '自定义(OAI)', tag: 'info' },
   'custom-anthropic': { label: '自定义(Claude)', tag: 'success' },
 }
@@ -846,6 +855,10 @@ const BASE_URL_CONFIG: Record<string, { placeholder: string; hint: string }> = {
   anthropic: {
     placeholder: 'https://api.anthropic.com',
     hint: 'Anthropic 官方接口，填写根地址即可，无需加 /v1',
+  },
+  ollama: {
+    placeholder: 'http://localhost:11434',
+    hint: 'Ollama 服务根地址，无需加 /v1；网关在 Docker 中运行时请使用 http://host.docker.internal:11434',
   },
   custom: {
     placeholder: 'https://your-openai-compatible-api.com',
@@ -862,6 +875,13 @@ const baseUrlHint = computed(() => BASE_URL_CONFIG[form.provider]?.hint ?? '')
 
 function providerLabel(p: string) { return PROVIDERS[p]?.label ?? p }
 function providerTagType(p: string) { return PROVIDERS[p]?.tag ?? 'info' }
+
+function handleProviderChange(provider: string) {
+  if (provider === 'ollama' && !form.baseUrl.trim()) {
+    form.baseUrl = 'http://localhost:11434'
+  }
+  formRef.value?.clearValidate('apiKey')
+}
 
 function channelModels(row: Channel) {
   return row.modelRoutes ?? []
@@ -888,7 +908,7 @@ async function testModel(idx: number) {
   const model = form.models[idx]?.trim()
   if (!model) { ElMessage.warning('请先填写模型名'); return }
   if (!form.baseUrl) { ElMessage.warning('请先填写 Base URL'); return }
-  if (!form.apiKey) { ElMessage.warning('测试需要填入 API Key'); return }
+  if (form.provider !== 'ollama' && !form.apiKey) { ElMessage.warning('测试需要填入 API Key'); return }
 
   testStates.value[idx] = { loading: true, status: 'idle', message: '' }
   try {
@@ -991,7 +1011,7 @@ function validateChannelImportPayload(payload: ChannelImportPayload): string[] {
     return errors
   }
 
-  const providers = new Set<ProviderType>(['openai', 'anthropic', 'custom', 'custom-anthropic'])
+  const providers = new Set<ProviderType>(['openai', 'anthropic', 'custom', 'custom-anthropic', 'ollama'])
 
   for (const [channelName, channel] of Object.entries(payload.channels)) {
     const prefix = `channels.${channelName}`
@@ -1007,11 +1027,11 @@ function validateChannelImportPayload(payload: ChannelImportPayload): string[] {
     if (typeof channel.baseURL !== 'string' || !channel.baseURL.trim()) {
       errors.push(`${prefix}.baseURL 必须是非空字符串`)
     }
-    if (typeof channel.apiKey !== 'string' || !channel.apiKey.trim()) {
+    if (channel.apiType !== 'ollama' && (typeof channel.apiKey !== 'string' || !channel.apiKey.trim())) {
       errors.push(`${prefix}.apiKey 必须是非空字符串`)
     }
     if (!providers.has(channel.apiType)) {
-      errors.push(`${prefix}.apiType 必须是 openai/anthropic/custom/custom-anthropic 之一`)
+      errors.push(`${prefix}.apiType 必须是 openai/anthropic/custom/custom-anthropic/ollama 之一`)
     }
     if (!Array.isArray(channel.models) || channel.models.length === 0) {
       errors.push(`${prefix}.models 必须是非空数组`)
@@ -1150,7 +1170,7 @@ async function submitQuickImport() {
         await client.post('/admin/channels', {
           name: channelName,
           baseUrl: channel.baseURL,
-          apiKey: channel.apiKey,
+          apiKey: channel.apiKey ?? '',
           provider: channel.apiType,
           models,
           modelAliases,

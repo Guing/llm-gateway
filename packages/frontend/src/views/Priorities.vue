@@ -291,7 +291,7 @@ const groups = computed<RouteGroup[]>(() => {
 })
 
 const PROVIDERS: Record<string, 'primary' | 'warning' | 'info' | 'success'> = {
-  openai: 'primary', anthropic: 'warning', custom: 'info', 'custom-anthropic': 'success',
+  openai: 'primary', anthropic: 'warning', ollama: 'success', custom: 'info', 'custom-anthropic': 'success',
 }
 function providerTagType(p: string) { return PROVIDERS[p] ?? 'info' }
 
